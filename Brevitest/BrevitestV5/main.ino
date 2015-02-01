@@ -8,12 +8,13 @@
 
 // GLOBAL VARIABLES
 
-// defines
-#define STATUS_LENGTH 100
-
 // general
 char serial_number[20];
 unsigned long start_time;
+
+// status
+#define STATUS_LENGTH 1000
+#define STATUS(args...) status_update(0, snprintf(status, STATUS_LENGTH, "STATUS ", args))
 char status[STATUS_LENGTH];
 
 // pin definitions
@@ -58,14 +59,14 @@ char websocketInit[] = "INIT:DEVICE:";
 unsigned long ping_interval = 10000UL;
 unsigned long last_ping = 0;
 
-//#define CLOUD
+#define CLOUD
 #ifdef CLOUD
-    char server[] = "brevitest.us.wak-apps.com";
+    char serverName[] = "brevitest.us.wak-apps.com";
     IPAddress serverIP;
     int serverPort = 80;
     bool useDNSserver = true;
 #else
-    char server[] = "brevitest.us.wak-apps.com";
+    char serverName[] = "brevitest.us.wak-apps.com";
     IPAddress serverIP(172, 16, 121, 53);
     int serverPort = 8081;
     bool useDNSserver = false;
@@ -147,7 +148,7 @@ bool limitSwitchOn() {
 }
 
 void reset_x_stage() {
-    status_update(0, snprintf(status, STATUS_LENGTH, "Resetting X stage"));
+    STATUS( "Resetting X stage");
     move_steps(-30000);
 }
 
@@ -162,10 +163,10 @@ void send_signal_to_insert_cartridge() {
         delay(300);
     }
 
-    status_update(0, snprintf(status, STATUS_LENGTH, "Open device, insert cartridge, and close device now");
+    STATUS("Open device, insert cartridge, and close device now");
     // wait 10 seconds for insertion of cartridge
     for (i = 10; i > 0; i -= 1) {
-        status_update(0, snprintf(status, STATUS_LENGTH, "Assay will begin in %d seconds...", i));
+        STATUS("Assay will begin in %d seconds...", i);
         delay(1000);
     }
 }
@@ -195,10 +196,10 @@ void raster_well(int number_of_rasters) {
 }
 
 void move_to_next_well_and_raster(int path_length, int well_size, String well_name) {
-    status_update(0, snprintf(status, STATUS_LENGTH, "Moving to %s well", well_name));
+    STATUS("Moving to %s well", well_name);
     move_steps(path_length);
 
-    status_update(0, snprintf(status, STATUS_LENGTH, "Rastering %s well", well_name));
+    STATUS("Rastering %s well", well_name);
     raster_well(well_size);
 }
 
@@ -213,7 +214,7 @@ void read_sensor(TCS34725 *sensor, String sensor_name) {
 
     sensor->getRawData(&red, &green, &blue, &clear);
 
-    status_update(0, snprintf(status, STATUS_LENGTH, "Sensor:\t%s\tt:\t%d\tC:\t%f\tR:\t%f\tG:\t%f\tB:\t", sensor_name, millis(), clear, red, green, blue));
+    STATUS("Sensor:\t%s\tt:\t%d\tC:\t%f\tR:\t%f\tG:\t%f\tB:\t", sensor_name, millis(), clear, red, green, blue);
 }
 
 void get_sensor_readings() {
@@ -238,33 +239,31 @@ void get_sensor_readings() {
 bool openWebsocket() {
     // Connect to the websocket server
     if (client.connect(serverIP, serverPort)) {
-        Serial.println("Connected to websocket server");
+        STATUS("Connected to websocket server");
 
         // Handshake with the server
         websocketClient.path = websocketPath;
-        websocketClient.host = server;
+        websocketClient.host = serverName;
 
         if (websocketClient.handshake(&client)) {
-            Serial.println("Websocket established.");
+            STATUS("Websocket established.");
             send_data_to_websocket((String) strcat(websocketInit, serial_number));
             start_time = millis();
             return true;
         }
         else {
-            Serial.println("Handshake failed.");
+            STATUS("Handshake failed.");
             client.stop();
         }
     }
     else {
-        Serial.println("Connection failed.");
+        STATUS("Connection failed.");
     }
 
     return false;
 }
 
 void send_data_to_websocket(String data) {
-    Serial.print("Sending data to websocket: ");
-    Serial.println(data);
     websocketClient.sendData(data);
 }
 
@@ -294,7 +293,7 @@ void websocket_loop() {
 
         websocketClient.getData(data);
         while (data.length() > 0) {
-            Serial.println("Websocket message received from server.");
+            STATUS("Websocket message received from server.");
             queue_message(data);
             data = "";
             websocketClient.getData(data);
@@ -303,7 +302,7 @@ void websocket_loop() {
       pingWebsocket();
     }
     else {
-        Serial.println("Client disconnected. Will try to re-establish connection");
+        STATUS("Client disconnected. Will try to re-establish connection");
         while (retries-- > 0) {
             if (openWebsocket()) {
                 retries = 0;
@@ -353,18 +352,17 @@ void process_message() {
 
     switch (i) {
         case 0: // ID
-            send_data_to_websocket(serial_number);
+            STATUS("Serial number: %s", serial_number);
             break;
         case 1: // INIT
             if (param.startsWith("SERVER")) {
-                Serial.println("Server initialization received");
+                STATUS("Server initialization received");
             }
             break;
         case 2: // PING
         case 3: // PONG
         case 4: // ECHO
-            Serial.print("Received: ");
-            Serial.println(cmd);
+            STATUS("Received: %s", cmd);
             break;
         case 5: // RUN
             run_brevitest();
@@ -373,13 +371,13 @@ void process_message() {
             reset_device();
             break;
         case 7: // DEVICE_STATUS
-            send_data_to_websocket(status);
+            STATUS("Status: %s", status);
             break;
         case 8: // LAST_READING
             get_sensor_readings();
             break;
         default:
-            Serial.println("Invalid or unknown message.");
+            STATUS("Invalid or unknown message.");
     }
 }
 
@@ -390,7 +388,7 @@ void process_message() {
 //
 
 void run_brevitest() {
-    Serial.println("Running BreviTest...");
+    STATUS("Running BreviTest...");
 
     reset_x_stage();
 
@@ -403,13 +401,13 @@ void run_brevitest() {
     move_to_next_well_and_raster(1000, 10, "buffer");
     move_to_next_well_and_raster(1000, 14, "indicator");
 
-    Serial.println("Reading sensors");
+    STATUS("Reading sensors");
     get_sensor_readings();
 
-    Serial.println("Clean up");
+    STATUS("Clean up");
     reset_device();
 
-    Serial.println("BreviTest run complete.");
+    STATUS("BreviTest run complete.");
 }
 
 void reset_device() {
@@ -423,17 +421,18 @@ void reset_device() {
 //
 //
 
-void status_update(int mode, int len) {
+void status_update(int mode, String status) {
   switch (mode) {
-    case 0: // send message
-      Serial.println(status);
-      break;
-    case 1:
-      break;
+    case 0: // send to serial port
+        Serial.println(status);
+        break;
+    case 1: // send to websocket
+        send_data_to_websocket(status);
+        break;
     case 2:
-      break;
+        break;
     case 3:
-      break;
+        break;
     default:
   }
 }
@@ -462,20 +461,40 @@ void setup() {
     Serial.begin(9600);
 
     if (tcsAssay.begin()) {
-        status_update(0, snprintf(status, STATUS_LENGTH, "Assay sensor initialized"));
+        STATUS("Assay sensor initialized");
     }
     else {
-        status_update(0, snprintf(status, STATUS_LENGTH, "Assay sensor not found"));
+        STATUS("Assay sensor not found");
     }
 
     if (tcsControl.begin()) {
-        status_update(0, snprintf(status, STATUS_LENGTH, "Control sensor initialized"));
+        STATUS("Control sensor initialized");
     }
     else {
-        status_update(0, snprintf(status, STATUS_LENGTH, "Control sensor not found"));
+        STATUS("Control sensor not found");
     }
 
     start_time = millis();
+
+    if (useDNSserver) {
+        STATUS("Host to lookup: %s", serverName);
+
+        int ret = 0;
+        dns.begin(dnsServerIP);					//this send the DNS server to the library
+        ret = dns.getHostByName(serverName, serverIP);	//ret is the error code, getHostByName needs 2 args, the server and somewhere to save the Address
+        if (ret == 1) {
+            STATUS("Hostname: %s, IP Address: %s", serverName, serverIP);
+        }
+        else {
+            STATUS("DNS failure. Error code: %d", ret);
+                //    Error Codes
+                //SUCCESS          1
+                //TIMED_OUT        -1
+                //INVALID_SERVER   -2
+                //TRUNCATED        -3
+                //INVALID_RESPONSE -4
+        }
+    }
 }
 
 //
@@ -495,13 +514,14 @@ void loop(){
         process_message();
     }
 
-    while (client.available()) {
+    while (client.available() && len < 100) {
         buf[len] = client.read();
         incoming = true;
         len += 1;
     }
+    buf[len] = '\0';
     if (incoming) {
-        status_update(0, snprintf(status, STATUS_LENGTH, buf));
+        STATUS("Message received: ", buf);
     }
 
     delay(500);
