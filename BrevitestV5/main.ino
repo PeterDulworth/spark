@@ -1,20 +1,19 @@
 #include "TCS34725.h"
-#include "SoftI2CMaster.h"
-#include "dnsclient/dnsclient.h"
-#include "global.h"
-#include "Base64.h"
-#include "sha1.h"
 #include "sparkWebsocket.h"
+#include "SoftI2CMaster.h"
+#include "sha1.h"
+#include "Base64.h"
+#include "dnsclient.h"
+#include "global.h"
 
 // GLOBAL VARIABLES
 
 // general
-char serial_number[20];
+String serial_number = "OBAD-BWUG-NCPA-WIAF";
 unsigned long start_time;
 
 // status
 #define STATUS_LENGTH 1000
-#define STATUS(args...) status_update(0, snprintf(status, STATUS_LENGTH, "STATUS ", args))
 char status[STATUS_LENGTH];
 
 // pin definitions
@@ -41,7 +40,7 @@ int message_queue_length = 0;
 int percent_complete = 0;
 
 // stepper
-int stepDelay =  2000;  // in microseconds
+int stepDelay =  1800;  // in microseconds
 long stepsPerRaster = 100;
 
 // solenoid
@@ -59,15 +58,16 @@ char websocketInit[] = "INIT:DEVICE:";
 unsigned long ping_interval = 10000UL;
 unsigned long last_ping = 0;
 
-#define CLOUD
+//#define CLOUD
 #ifdef CLOUD
     char serverName[] = "brevitest.us.wak-apps.com";
     IPAddress serverIP;
     int serverPort = 80;
     bool useDNSserver = true;
-#else
+#endif
+#ifndef CLOUD
     char serverName[] = "brevitest.us.wak-apps.com";
-    IPAddress serverIP(172, 16, 121, 53);
+    IPAddress serverIP(172, 16, 121, 212);
     int serverPort = 8081;
     bool useDNSserver = false;
 #endif
@@ -114,7 +114,7 @@ void move_steps(long steps){
             break;
         }
 
-        if (i%100 == 0) {
+        if (i%20 == 0) {
             Spark.process();
         }
 
@@ -148,7 +148,7 @@ bool limitSwitchOn() {
 }
 
 void reset_x_stage() {
-    STATUS( "Resetting X stage");
+    status_update(0, snprintf(status, 1000,  "Resetting X stage"));
     move_steps(-30000);
 }
 
@@ -163,10 +163,10 @@ void send_signal_to_insert_cartridge() {
         delay(300);
     }
 
-    STATUS("Open device, insert cartridge, and close device now");
+    status_update(0, snprintf(status, 1000, "Open device, insert cartridge, and close device now"));
     // wait 10 seconds for insertion of cartridge
     for (i = 10; i > 0; i -= 1) {
-        STATUS("Assay will begin in %d seconds...", i);
+        status_update(0, snprintf(status, 1000, "Assay will begin in %d seconds...", i));
         delay(1000);
     }
 }
@@ -195,11 +195,11 @@ void raster_well(int number_of_rasters) {
     delay(4000);
 }
 
-void move_to_next_well_and_raster(int path_length, int well_size, String well_name) {
-    STATUS("Moving to %s well", well_name);
+void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name) {
+    status_update(0, snprintf(status, 1000, "Moving to %s well", well_name));
     move_steps(path_length);
 
-    STATUS("Rastering %s well", well_name);
+    status_update(0, snprintf(status, 1000, "Rastering %s well", well_name));
     raster_well(well_size);
 }
 
@@ -209,21 +209,24 @@ void move_to_next_well_and_raster(int path_length, int well_size, String well_na
 //
 //
 
-void read_sensor(TCS34725 *sensor, String sensor_name) {
-    uint16_t clear, red, green, blue;
+void read_sensor(TCS34725 *sensor, char *sensor_name) {
+    uint16_t t, clear, red, green, blue;
 
+    t = millis() - start_time;
     sensor->getRawData(&red, &green, &blue, &clear);
 
-    STATUS("Sensor:\t%s\tt:\t%d\tC:\t%f\tR:\t%f\tG:\t%f\tB:\t", sensor_name, millis(), clear, red, green, blue);
+    status_update(0, snprintf(status, 1000, "Sensor:\t%s\tt:\t%u\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensor_name, t, clear, red, green, blue));
 }
 
 void get_sensor_readings() {
+    char assay[6] = "Assay";
+    char control[8] = "Control";
     analogWrite(pinLED, 20);
     delay(2000);
 
     for (int i = 0; i < 10; i += 1) {
-        read_sensor(&tcsAssay, "Assay");
-        read_sensor(&tcsControl, "Control");
+        read_sensor(&tcsAssay, assay);
+        read_sensor(&tcsControl, control);
         delay(1000);
     }
 
@@ -237,33 +240,39 @@ void get_sensor_readings() {
 //
 
 bool openWebsocket() {
+    char charSN[20];
     // Connect to the websocket server
     if (client.connect(serverIP, serverPort)) {
-        STATUS("Connected to websocket server");
+        status_update(0, snprintf(status, 1000, "Connected to websocket server"));
 
         // Handshake with the server
         websocketClient.path = websocketPath;
         websocketClient.host = serverName;
 
         if (websocketClient.handshake(&client)) {
-            STATUS("Websocket established.");
-            send_data_to_websocket((String) strcat(websocketInit, serial_number));
+            status_update(0, snprintf(status, 1000, "Websocket established."));
+            serial_number.toCharArray(charSN, 20);
+            send_data_to_websocket(strcat(websocketInit, charSN));
             start_time = millis();
             return true;
         }
         else {
-            STATUS("Handshake failed.");
+            status_update(0, snprintf(status, 1000, "Handshake failed."));
             client.stop();
         }
     }
     else {
-        STATUS("Connection failed.");
+        status_update(0, snprintf(status, 1000, "Connection failed."));
     }
 
     return false;
 }
 
-void send_data_to_websocket(String data) {
+void send_data_to_websocket(char *data) {
+    websocketClient.sendData(data);
+}
+
+void send_string_to_websocket(String data) {
     websocketClient.sendData(data);
 }
 
@@ -281,8 +290,16 @@ void pingWebsocket() {
     unsigned long elapsed_time = millis() - start_time;
     if ((elapsed_time - last_ping) > ping_interval) {
         last_ping = elapsed_time;
-        send_data_to_websocket("PING");
+        send_string_to_websocket("PING");
     }
+}
+
+int queue_message(String msg) {
+    char buf[100];
+
+    msg.toCharArray(buf, 100);
+    status_update(0, snprintf(status, 1000, buf));
+    return 1;
 }
 
 void websocket_loop() {
@@ -293,7 +310,7 @@ void websocket_loop() {
 
         websocketClient.getData(data);
         while (data.length() > 0) {
-            STATUS("Websocket message received from server.");
+            status_update(0, snprintf(status, 1000, "Websocket message received from server."));
             queue_message(data);
             data = "";
             websocketClient.getData(data);
@@ -302,7 +319,7 @@ void websocket_loop() {
       pingWebsocket();
     }
     else {
-        STATUS("Client disconnected. Will try to re-establish connection");
+        status_update(0, snprintf(status, 1000, "Client disconnected. Will try to re-establish connection"));
         while (retries-- > 0) {
             if (openWebsocket()) {
                 retries = 0;
@@ -333,6 +350,7 @@ void getParameters(String msg, String *param) {
 
 void process_message() {
     String cmd, msg, param;
+    char buf[50];
     int i;
 
     msg = message_queue[0];
@@ -352,17 +370,19 @@ void process_message() {
 
     switch (i) {
         case 0: // ID
-            STATUS("Serial number: %s", serial_number);
+            serial_number.toCharArray(buf, 20);
+            status_update(0, snprintf(status, 1000, "Serial number: %s", buf));
             break;
         case 1: // INIT
             if (param.startsWith("SERVER")) {
-                STATUS("Server initialization received");
+                status_update(0, snprintf(status, 1000, "Server initialization received"));
             }
             break;
         case 2: // PING
         case 3: // PONG
         case 4: // ECHO
-            STATUS("Received: %s", cmd);
+            cmd.toCharArray(buf, 50);
+            status_update(0, snprintf(status, 1000, "Received: %s", buf));
             break;
         case 5: // RUN
             run_brevitest();
@@ -371,13 +391,13 @@ void process_message() {
             reset_device();
             break;
         case 7: // DEVICE_STATUS
-            STATUS("Status: %s", status);
+            status_update(0, snprintf(status, 1000, "Status: %s", status));
             break;
         case 8: // LAST_READING
             get_sensor_readings();
             break;
         default:
-            STATUS("Invalid or unknown message.");
+            status_update(0, snprintf(status, 1000, "Invalid or unknown message."));
     }
 }
 
@@ -388,7 +408,7 @@ void process_message() {
 //
 
 void run_brevitest() {
-    STATUS("Running BreviTest...");
+    status_update(0, snprintf(status, 1000, "Running BreviTest..."));
 
     reset_x_stage();
 
@@ -401,13 +421,13 @@ void run_brevitest() {
     move_to_next_well_and_raster(1000, 10, "buffer");
     move_to_next_well_and_raster(1000, 14, "indicator");
 
-    STATUS("Reading sensors");
+    status_update(0, snprintf(status, 1000, "Reading sensors"));
     get_sensor_readings();
 
-    STATUS("Clean up");
+    status_update(0, snprintf(status, 1000, "Clean up"));
     reset_device();
 
-    STATUS("BreviTest run complete.");
+    status_update(0, snprintf(status, 1000, "BreviTest run complete."));
 }
 
 void reset_device() {
@@ -421,8 +441,12 @@ void reset_device() {
 //
 //
 
-void status_update(int mode, String status) {
-  switch (mode) {
+void status_update(int mode, int count) {
+    if (count < 0) {
+        return;
+    }
+
+    switch (mode) {
     case 0: // send to serial port
         Serial.println(status);
         break;
@@ -434,7 +458,8 @@ void status_update(int mode, String status) {
     case 3:
         break;
     default:
-  }
+        break;
+    }
 }
 
 //
@@ -444,6 +469,12 @@ void status_update(int mode, String status) {
 //
 
 void setup() {
+    Spark.function("queue", queue_message);
+    Spark.variable("serialnumber", &serial_number, STRING);
+    Spark.variable("status", &status, STRING);
+    Spark.variable("queuelength", &message_queue_length, INT);
+    Spark.variable("percentdone", &percent_complete, INT);
+
     pinMode(pinSolenoid, OUTPUT);
     pinMode(pinStepperStep, OUTPUT);
     pinMode(pinStepperDir, OUTPUT);
@@ -459,34 +490,34 @@ void setup() {
     digitalWrite(pinStepperSleep, LOW);
 
     Serial.begin(9600);
+    while (!Serial.available()) {
+        Spark.process();
+    }
 
     if (tcsAssay.begin()) {
-        STATUS("Assay sensor initialized");
+        status_update(0, snprintf(status, 1000, "Assay sensor initialized"));
     }
     else {
-        STATUS("Assay sensor not found");
+        status_update(0, snprintf(status, 1000, "Assay sensor not found"));
     }
 
     if (tcsControl.begin()) {
-        STATUS("Control sensor initialized");
+        status_update(0, snprintf(status, 1000, "Control sensor initialized"));
     }
     else {
-        STATUS("Control sensor not found");
+        status_update(0, snprintf(status, 1000, "Control sensor not found"));
     }
 
     start_time = millis();
 
     if (useDNSserver) {
-        STATUS("Host to lookup: %s", serverName);
+        status_update(0, snprintf(status, 1000, "Host to lookup: %s", serverName));
 
         int ret = 0;
         dns.begin(dnsServerIP);					//this send the DNS server to the library
         ret = dns.getHostByName(serverName, serverIP);	//ret is the error code, getHostByName needs 2 args, the server and somewhere to save the Address
-        if (ret == 1) {
-            STATUS("Hostname: %s, IP Address: %s", serverName, serverIP);
-        }
-        else {
-            STATUS("DNS failure. Error code: %d", ret);
+        if (ret != 1) {
+            status_update(0, snprintf(status, 1000, "DNS failure. Error code: %d", ret));
                 //    Error Codes
                 //SUCCESS          1
                 //TIMED_OUT        -1
@@ -495,6 +526,8 @@ void setup() {
                 //INVALID_RESPONSE -4
         }
     }
+
+    status_update(0, snprintf(status, 1000, "Hostname: %s, IP Address: %d.%d.%d.%d", serverName, serverIP[0], serverIP[1], serverIP[2], serverIP[3]));
 }
 
 //
@@ -508,7 +541,7 @@ void loop(){
     int len = 0;
     char buf[100];
 
-    websocket_loop();
+//    websocket_loop();
 
     if (message_queue_length > 0) {
         process_message();
@@ -521,7 +554,7 @@ void loop(){
     }
     buf[len] = '\0';
     if (incoming) {
-        STATUS("Message received: ", buf);
+        status_update(0, snprintf(status, 1000, "Message received: %s", buf));
     }
 
     delay(500);
