@@ -4,7 +4,7 @@
 // GLOBAL VARIABLES
 
 // general
-String serial_number = "OBAD-BWUG-NCPA-WIAF";
+//String serial_number = "OBAD-BWUG-NCPA-WIAF";
 unsigned long start_time;
 char buf[623];
 
@@ -27,15 +27,9 @@ int pinAssaySCL = D4;
 int pinControlSDA = D5;
 int pinControlSCL = D6;
 
-// sensor objects
-#define SENSOR_SAMPLES 10
-
-TCS34725 tcsAssay = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinAssaySDA, pinAssaySCL);
-TCS34725 tcsControl = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinControlSDA, pinControlSCL);
-String assay_result[2*SENSOR_SAMPLES];
-
 // messaging
-String spark_register = "";
+#define SPARK_REGISTER_SIZE 623
+char spark_register[SPARK_REGISTER_SIZE];
 String uuid = "";
 int percent_complete = 0;
 
@@ -48,19 +42,12 @@ int solenoidSustainPower = 100;
 int solenoidSurgePower = 255;
 int solenoidSurgePeriod = 200; // milliseconds
 
-//#define CLOUD
-#ifdef CLOUD
-    char serverName[] = "brevitest.us.wak-apps.com";
-    IPAddress serverIP;
-    int serverPort = 80;
-    bool useDNSserver = true;
-#endif
-#ifndef CLOUD
-    char serverName[] = "brevitest.us.wak-apps.com";
-    IPAddress serverIP(172, 16, 121, 212);
-    int serverPort = 8081;
-    bool useDNSserver = false;
-#endif
+// sensors
+#define SENSOR_SAMPLES 10
+String assay_result[2*SENSOR_SAMPLES];
+
+TCS34725 tcsAssay = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinAssaySDA, pinAssaySCL);
+TCS34725 tcsControl = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinControlSDA, pinControlSCL);
 
 //
 //
@@ -114,7 +101,7 @@ void move_steps(long steps){
             break;
         }
 
-        if (i%20 == 0) {
+        if (i%100 == 0) {
             Spark.process();
         }
 
@@ -190,19 +177,20 @@ void move_to_next_well_and_raster(int path_length, int well_size, const char *we
 //
 //
 
-void read_sensor(TCS34725 *sensor, char *sensor_name, int reading_number) {
+void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
     uint16_t t, clear, red, green, blue;
+    int index = 2 * reading_number + (sensorCode == 'A' ? 0 : 1);
 
     t = millis() - start_time;
     sensor->getRawData(&red, &green, &blue, &clear);
 
-    status_update(snprintf(status, STATUS_LENGTH, "Sensor:\t%s\tt:\t%u\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensor_name, t, clear, red, green, blue));
-    assay_result[reading_number] = String(sensor_name[0]) + " \tN:" + String(reading_number) + " \tt:" + String(t) + "\tC:" + String(clear) + "\tR:" + String(red) + "\tG:"  + String(green) + "\tB:" + String(blue);
+    status_update(snprintf(status, STATUS_LENGTH, "Sensor:\t%s\tt:\t%u\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensorCode, t, clear, red, green, blue));
+    assay_result[index] = String(sensorCode) + " \tN:" + String(reading_number) + " \tt:" + String(t) + "\tC:" + String(clear) + "\tR:" + String(red) + "\tG:"  + String(green) + "\tB:" + String(blue);
 }
 
 void collect_sensor_readings() {
-    char assay[6] = "Assay";
-    char control[8] = "Control";
+    char assay = 'A';
+    char control = 'C';
 
     analogWrite(pinLED, 20);
     delay(2000);
@@ -224,13 +212,13 @@ void collect_sensor_readings() {
 
 void get_sensor_data(String request) {
     int index = request.toInt();
-    spark_register = assay_result[index];
+    assay_result[index].toCharArray(spark_register, SPARK_REGISTER_SIZE);
 }
 
 void get_serial_number() {
-    spark_register = "";
+    spark_register[19] = '\0';
     for (int i = 0; i < 19; i += 1) {
-        spark_register.setCharAt(i, (char) EEPROM.read(i));
+        spark_register[i] = (char) EEPROM.read(i);
     }
 }
 
@@ -240,11 +228,8 @@ void get_serial_number() {
 //
 //
 
-int ping(String msg) {
-    return 1;
-}
-
 int write_serial_number(String msg) {
+    Serial.println("write_serial_number");
     if (msg.length() == 19) {
         status_update(snprintf(status, STATUS_LENGTH, "Writing serial number."));
         for (int i = 0; i < 19; i += 1) {
@@ -259,18 +244,16 @@ int write_serial_number(String msg) {
 }
 
 int request_data(String msg) {
+    Serial.println("request_data");
     int request_type;
     String request;
 
     msg.toCharArray(buf, 63);
-    status_update(snprintf(status, STATUS_LENGTH, "Data request: %s", buf));
-    if (spark_register.length() == 0) {
-        uuid = "" + msg.substring(0, 31);
-        Serial.println(uuid);
-        request_type = msg.substring(32, 33).toInt();
-        Serial.println(request_type);
+    if (spark_register[0] == '\0') {
+        status_update(snprintf(status, STATUS_LENGTH, "Data request: %s", buf));
+        uuid = "" + msg.substring(0, 32);
+        request_type = msg.substring(32, 34).toInt();
         request = "" + msg.substring(34);
-        Serial.println(request);
 
         switch (request_type) {
             case 0: // serial_number
@@ -280,33 +263,29 @@ int request_data(String msg) {
                 get_sensor_data(request);
                 break;
         }
-        return (spark_register == "" ? -1 : 1);
+        return (spark_register[0] == '\0' ? -1 : 1);
     }
     else {
-        spark_register.toCharArray(buf, 622);
-        status_update(snprintf(status, STATUS_LENGTH, "Register locked. Request denied. Register: %s", buf));
-        return -1;
-    }
-}
-
-int release_data(String msg) {
-    Serial.println(msg);
-    if (uuid.equals(msg)) {
-        spark_register = "";
-        return 1;
-    }
-    else {
-        status_update(snprintf(status, STATUS_LENGTH, "Register uuid mismatch. Release denied."));
-        return -1;
+        Serial.println("Release register");
+        if (uuid.equals(msg)) {
+            spark_register[0] = '\0';
+            return 1;
+        }
+        else {
+            status_update(snprintf(status, STATUS_LENGTH, "Register uuid mismatch. Release denied."));
+            return -1;
+        }
     }
 }
 
 int initialize_device(String msg) {
+    Serial.println("initialize_device");
     init_device = !run_assay;
     return 1;
 }
 
 int run_brevitest(String msg) {
+    Serial.println("run_brevitest");
     if (run_assay) {
         status_update(snprintf(status, STATUS_LENGTH, "Assay already running."));
         return -1;
@@ -326,14 +305,12 @@ int run_brevitest(String msg) {
 //
 
 void setup() {
-    Spark.function("ping", ping);
     Spark.function("writeserial", write_serial_number);
     Spark.function("requestdata", request_data);
-    Spark.function("releasedata", release_data);
     Spark.function("initdevice", initialize_device);
     Spark.function("runassay", run_brevitest);
-    Spark.variable("register", &spark_register, STRING);
-    Spark.variable("status", &status, STRING);
+    Spark.variable("register", spark_register, STRING);
+    Spark.variable("status", status, STRING);
 
     pinMode(pinSolenoid, OUTPUT);
     pinMode(pinStepperStep, OUTPUT);
@@ -366,7 +343,6 @@ void setup() {
     }
 
     start_time = millis();
-    status_update(snprintf(status, STATUS_LENGTH, "Hostname: %s, IP Address: %d.%d.%d.%d", serverName, serverIP[0], serverIP[1], serverIP[2], serverIP[3]));
 }
 
 //
