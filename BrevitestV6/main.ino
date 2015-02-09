@@ -188,10 +188,10 @@ void init_sensor(TCS34725 *sensor) {
 }
 
 void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
-    uint16_t t, clear, red, green, blue;
+    uint16_t clear, red, green, blue;
+    unsigned long t = millis() - start_time;
     int index = 2 * reading_number + (sensorCode == 'A' ? 0 : 1);
 
-    t = millis() - start_time;
     sensor->getRawData(&red, &green, &blue, &clear);
 
     status_update(snprintf(status, STATUS_LENGTH, "Sensor:\t%s\tt:\t%u\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensorCode, t, clear, red, green, blue));
