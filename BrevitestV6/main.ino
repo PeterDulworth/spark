@@ -6,7 +6,6 @@
 // general
 //String serial_number = "OBAD-BWUG-NCPA-WIAF";
 unsigned long start_time;
-char buf[623];
 
 // status
 #define STATUS_LENGTH 1000
@@ -27,11 +26,12 @@ int pinAssaySCL = D4;
 int pinControlSDA = D5;
 int pinControlSCL = D6;
 
-// messaging
+// spark messaging
 #define SPARK_REGISTER_SIZE 623
+#define SPARK_ARG_SIZE 63
 char spark_register[SPARK_REGISTER_SIZE];
+char spark_argument[SPARK_ARG_SIZE + 1];
 String uuid = "";
-int percent_complete = 0;
 
 // stepper
 int stepDelay =  1800;  // in microseconds
@@ -44,6 +44,7 @@ int solenoidSurgePeriod = 200; // milliseconds
 
 // sensors
 #define SENSOR_SAMPLES 10
+#define SENSOR_MS_BETWEEN_SAMPLES 1000
 String assay_result[2*SENSOR_SAMPLES];
 
 TCS34725 tcsAssay = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinAssaySDA, pinAssaySCL);
@@ -177,6 +178,15 @@ void move_to_next_well_and_raster(int path_length, int well_size, const char *we
 //
 //
 
+void init_sensor(TCS34725 *sensor) {
+    if (sensor->begin()) {
+        sensor->enable();
+    }
+    else {
+        Serial.println("Sensor not found"));
+    }
+}
+
 void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
     uint16_t t, clear, red, green, blue;
     int index = 2 * reading_number + (sensorCode == 'A' ? 0 : 1);
@@ -189,24 +199,16 @@ void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
 }
 
 void collect_sensor_readings() {
-    char assay = 'A';
-    char control = 'C';
-
-    analogWrite(pinLED, 20);
-    delay(2000);
-
     for (int i = 0; i < 10; i += 1) {
-        read_sensor(&tcsAssay, assay, i);
-        read_sensor(&tcsControl, control, i);
-        delay(1000);
+        read_sensor(&tcsAssay, 'A', i);
+        read_sensor(&tcsControl, 'C', i);
+        delay(SENSOR_MS_BETWEEN_SAMPLES);
     }
-
-    analogWrite(pinLED, 0);
 }
 
 //
 //
-//  DATA REQUESTS
+//  MAIN FUNCTIONS
 //
 //
 
@@ -221,12 +223,6 @@ void get_serial_number() {
         spark_register[i] = (char) EEPROM.read(i);
     }
 }
-
-//
-//
-//  EXPOSED FUNCTIONS
-//
-//
 
 int write_serial_number(String msg) {
     Serial.println("write_serial_number");
@@ -243,14 +239,40 @@ int write_serial_number(String msg) {
     }
 }
 
+int initialize_device() {
+    Serial.println("initialize_device");
+    init_device = !run_assay;
+    return 1;
+}
+
+int run_brevitest() {
+    Serial.println("run_brevitest");
+    if (run_assay) {
+        status_update(snprintf(status, STATUS_LENGTH, "Assay already running."));
+        return -1;
+    }
+    if (!device_ready) {
+        status_update(snprintf(status, STATUS_LENGTH, "Device not ready. Please reset the device."));
+        return -1;
+    }
+    run_assay = true;
+    return 1;
+}
+
+//
+//
+//  EXPOSED FUNCTIONS
+//
+//
+
 int request_data(String msg) {
     Serial.println("request_data");
     int request_type;
     String request;
 
-    msg.toCharArray(buf, 63);
+    msg.toCharArray(spark_argument, SPARK_ARG_SIZE);
     if (spark_register[0] == '\0') {
-        status_update(snprintf(status, STATUS_LENGTH, "Data request: %s", buf));
+        status_update(snprintf(status, STATUS_LENGTH, "Data request: %s", spark_argument));
         uuid = "" + msg.substring(0, 32);
         request_type = msg.substring(32, 34).toInt();
         request = "" + msg.substring(34);
@@ -278,24 +300,25 @@ int request_data(String msg) {
     }
 }
 
-int initialize_device(String msg) {
-    Serial.println("initialize_device");
-    init_device = !run_assay;
-    return 1;
-}
+int run_command(String msg) {
+    Serial.println("run_command");
+    int command_type, result;
+    String arg;
 
-int run_brevitest(String msg) {
-    Serial.println("run_brevitest");
-    if (run_assay) {
-        status_update(snprintf(status, STATUS_LENGTH, "Assay already running."));
-        return -1;
+    msg.toCharArray(spark_argument, SPARK_ARG_SIZE);
+    status_update(snprintf(status, STATUS_LENGTH, "Run command: %s", spark_argument));
+    command_type = msg.substring(0, 2).toInt();
+    arg = "" + msg.substring(2);
+
+    switch (command_type) {
+        case 0: // write serial number
+            return write_serial_number(arg);
+        case 1: // initialize device
+            return initialize_device();
+        case 2: // run assay
+            return run_brevitest();
     }
-    if (!device_ready) {
-        status_update(snprintf(status, STATUS_LENGTH, "Device not ready. Please reset the device."));
-        return -1;
-    }
-    run_assay = true;
-    return 1;
+    return -1;
 }
 
 //
@@ -305,10 +328,8 @@ int run_brevitest(String msg) {
 //
 
 void setup() {
-    Spark.function("writeserial", write_serial_number);
+    Spark.function("runcommand", run_command);
     Spark.function("requestdata", request_data);
-    Spark.function("initdevice", initialize_device);
-    Spark.function("runassay", run_brevitest);
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", status, STRING);
 
@@ -326,23 +347,12 @@ void setup() {
     digitalWrite(pinSolenoid, LOW);
     digitalWrite(pinStepperSleep, LOW);
 
+    start_time = millis();
+
     Serial.begin(9600);
 
-    if (tcsAssay.begin()) {
-        status_update(snprintf(status, STATUS_LENGTH, "Assay sensor initialized"));
-    }
-    else {
-        status_update(snprintf(status, STATUS_LENGTH, "Assay sensor not found"));
-    }
-
-    if (tcsControl.begin()) {
-        status_update(snprintf(status, STATUS_LENGTH, "Control sensor initialized"));
-    }
-    else {
-        status_update(snprintf(status, STATUS_LENGTH, "Control sensor not found"));
-    }
-
-    start_time = millis();
+    init_sensor(&tcsAssay);
+    init_sensor(&tcsControl);
 }
 
 //
@@ -356,6 +366,7 @@ void loop(){
         status_update(snprintf(status, STATUS_LENGTH, "Initializing device"));
         solenoid_out();
         reset_x_stage();
+        analogWrite(pinLED, 0);
         device_ready = true;
         init_device = false;
     }
@@ -363,6 +374,8 @@ void loop(){
     if (device_ready && run_assay) {
         device_ready = false;
         status_update(snprintf(status, STATUS_LENGTH, "Running BreviTest..."));
+
+        analogWrite(pinLED, 20);
 
         move_to_next_well_and_raster(2000, 10, "sample");
         move_to_next_well_and_raster(1000, 10, "antibody");
@@ -376,6 +389,8 @@ void loop(){
 
         status_update(snprintf(status, STATUS_LENGTH, "Clean up"));
         reset_x_stage();
+        analogWrite(pinLED, 0);
+
         status_update(snprintf(status, STATUS_LENGTH, "BreviTest run complete."));
         run_assay = false;
     }
