@@ -188,7 +188,7 @@ void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number, char *bu
 
     sensor->getRawData(&red, &green, &blue, &clear);
 
-    snprintf(buf, 64, "%c\tt:\t%lu\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensorCode, t, clear, red, green, blue);
+    snprintf(buf, 64, "%c\t%d\t%lu\t%u\t%u\t%u\t%u", sensorCode, reading_number, t, clear, red, green, blue);
     String temp(buf);
     assay_result[index] = temp;
 }
@@ -196,6 +196,7 @@ void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number, char *bu
 void collect_sensor_readings() {
     char buf[64];
     STATUS("Collecting sensor data");
+    start_time = millis();
     for (int i = 0; i < 10; i += 1) {
         read_sensor(&tcsAssay, 'A', i, buf);
         read_sensor(&tcsControl, 'C', i, buf);
@@ -208,6 +209,23 @@ void collect_sensor_readings() {
 //  MAIN FUNCTIONS
 //
 //
+
+void get_all_sensor_data() {
+    int bufSize, i, len;
+    int index = 0;
+
+    for (i = 0; i < 2*SENSOR_SAMPLES; i += 1) {
+        bufSize = SPARK_REGISTER_SIZE - index;
+        len = assay_result[i].length();
+        if (bufSize < len + 1) {
+            break;
+        }
+        assay_result[i].toCharArray(&spark_register[index], bufSize);
+        index += len;
+        spark_register[index++] = '\n';
+    }
+    spark_register[index] = '\0';
+}
 
 void get_sensor_data(String request) {
     int index = request.toInt();
@@ -274,7 +292,10 @@ int request_data(String msg) {
             case 0: // serial_number
                 get_serial_number();
                 break;
-            case 1: // sensor data request
+            case 1: // all sensor data
+                get_all_sensor_data();
+                break;
+            case 2: // one sensor data point
                 get_sensor_data(request);
                 break;
         }
@@ -312,6 +333,15 @@ int run_command(String msg) {
     return -1;
 }
 
+int sensor_data(String msg) {
+    analogWrite(pinLED, 20);
+    delay(1000);
+    collect_sensor_readings();
+    analogWrite(pinLED, 0);
+    return 1;
+}
+
+
 //
 //
 //  SETUP
@@ -321,6 +351,7 @@ int run_command(String msg) {
 void setup() {
     Spark.function("runcommand", run_command);
     Spark.function("requestdata", request_data);
+    Spark.function("sensordata", sensor_data);
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", status, STRING);
 
@@ -337,8 +368,6 @@ void setup() {
 
     digitalWrite(pinSolenoid, LOW);
     digitalWrite(pinStepperSleep, LOW);
-
-    start_time = millis();
 
     Serial.begin(9600);
 
@@ -368,6 +397,8 @@ void loop(){
     if (device_ready && run_assay) {
         device_ready = false;
         STATUS("Running assay...");
+
+        start_time = millis();
 
         analogWrite(pinLED, 20);
 
