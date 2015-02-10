@@ -13,6 +13,8 @@ char status[STATUS_LENGTH];
 bool device_ready = false;
 bool init_device = false;
 bool run_assay = false;
+#define STATUS(...) snprintf(status, STATUS_LENGTH, __VA_ARGS__)
+#define ERROR(err) Serial.println(err)
 
 // pin definitions
 int pinSolenoid = A1;
@@ -50,17 +52,6 @@ String assay_result[2*SENSOR_SAMPLES];
 TCS34725 tcsAssay = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinAssaySDA, pinAssaySCL);
 TCS34725 tcsControl = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinControlSDA, pinControlSCL);
 
-//
-//
-//  STATUS
-//
-//
-
-void status_update(int count) {
-    if (count >= 0) {
-        Serial.println(status);
-    }
-}
 
 //
 //
@@ -78,6 +69,7 @@ void solenoid_in(bool check_limit_switch) {
 }
 
 void solenoid_out() {
+    Spark.process();
     analogWrite(pinSolenoid, 0);
 }
 
@@ -136,7 +128,7 @@ bool limitSwitchOn() {
 }
 
 void reset_x_stage() {
-    status_update(snprintf(status, STATUS_LENGTH,  "Resetting X stage"));
+    STATUS("Resetting device");
     move_steps(-30000);
 }
 
@@ -165,10 +157,10 @@ void raster_well(int number_of_rasters) {
 }
 
 void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name) {
-    status_update(snprintf(status, STATUS_LENGTH, "Moving to %s well", well_name));
+    STATUS("Moving to %s well", well_name);
     move_steps(path_length);
 
-    status_update(snprintf(status, STATUS_LENGTH, "Rastering %s well", well_name));
+    STATUS("Rastering %s well", well_name);
     raster_well(well_size);
 }
 
@@ -183,25 +175,30 @@ void init_sensor(TCS34725 *sensor) {
         sensor->enable();
     }
     else {
-        Serial.println("Sensor not found"));
+        ERROR("Sensor not found");
     }
 }
 
-void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
+void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number, char *buf) {
     uint16_t clear, red, green, blue;
     unsigned long t = millis() - start_time;
     int index = 2 * reading_number + (sensorCode == 'A' ? 0 : 1);
 
+    STATUS("Reading %s sensor (%d of 10)", (sensorCode == 'A' ? "Assay" : "Control"), reading_number + 1);
+
     sensor->getRawData(&red, &green, &blue, &clear);
 
-    status_update(snprintf(status, STATUS_LENGTH, "Sensor:\t%s\tt:\t%u\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensorCode, t, clear, red, green, blue));
-    assay_result[index] = String(sensorCode) + " \tN:" + String(reading_number) + " \tt:" + String(t) + "\tC:" + String(clear) + "\tR:" + String(red) + "\tG:"  + String(green) + "\tB:" + String(blue);
+    snprintf(buf, 64, "%c\tt:\t%lu\tC:\t%u\tR:\t%u\tG:\t%u\tB:\t%u", sensorCode, t, clear, red, green, blue);
+    String temp(buf);
+    assay_result[index] = temp;
 }
 
 void collect_sensor_readings() {
+    char buf[64];
+    STATUS("Collecting sensor data");
     for (int i = 0; i < 10; i += 1) {
-        read_sensor(&tcsAssay, 'A', i);
-        read_sensor(&tcsControl, 'C', i);
+        read_sensor(&tcsAssay, 'A', i, buf);
+        read_sensor(&tcsControl, 'C', i, buf);
         delay(SENSOR_MS_BETWEEN_SAMPLES);
     }
 }
@@ -225,34 +222,31 @@ void get_serial_number() {
 }
 
 int write_serial_number(String msg) {
-    Serial.println("write_serial_number");
     if (msg.length() == 19) {
-        status_update(snprintf(status, STATUS_LENGTH, "Writing serial number."));
+        STATUS("Writing serial number");
         for (int i = 0; i < 19; i += 1) {
             EEPROM.write(i, (uint8_t) msg.charAt(i));
         }
         return 1;
     }
     else {
-        status_update(snprintf(status, STATUS_LENGTH, "Serial number not 19 characters. Writing serial number failed."));
+        ERROR("Writing serial number failed (Serial number must be 19 characters)");
         return -1;
     }
 }
 
 int initialize_device() {
-    Serial.println("initialize_device");
     init_device = !run_assay;
     return 1;
 }
 
 int run_brevitest() {
-    Serial.println("run_brevitest");
     if (run_assay) {
-        status_update(snprintf(status, STATUS_LENGTH, "Assay already running."));
+        ERROR("Command ignored. Assay already running.");
         return -1;
     }
     if (!device_ready) {
-        status_update(snprintf(status, STATUS_LENGTH, "Device not ready. Please reset the device."));
+        ERROR("Device not ready. Please reset the device.");
         return -1;
     }
     run_assay = true;
@@ -266,13 +260,12 @@ int run_brevitest() {
 //
 
 int request_data(String msg) {
-    Serial.println("request_data");
     int request_type;
     String request;
 
     msg.toCharArray(spark_argument, SPARK_ARG_SIZE);
     if (spark_register[0] == '\0') {
-        status_update(snprintf(status, STATUS_LENGTH, "Data request: %s", spark_argument));
+        STATUS("Data request: %s", spark_argument);
         uuid = "" + msg.substring(0, 32);
         request_type = msg.substring(32, 34).toInt();
         request = "" + msg.substring(34);
@@ -288,25 +281,23 @@ int request_data(String msg) {
         return (spark_register[0] == '\0' ? -1 : 1);
     }
     else {
-        Serial.println("Release register");
         if (uuid.equals(msg)) {
             spark_register[0] = '\0';
             return 1;
         }
         else {
-            status_update(snprintf(status, STATUS_LENGTH, "Register uuid mismatch. Release denied."));
+            ERROR("Register uuid mismatch. Release denied.");
             return -1;
         }
     }
 }
 
 int run_command(String msg) {
-    Serial.println("run_command");
-    int command_type, result;
+    int command_type;
     String arg;
 
     msg.toCharArray(spark_argument, SPARK_ARG_SIZE);
-    status_update(snprintf(status, STATUS_LENGTH, "Run command: %s", spark_argument));
+    STATUS("Run command: %s", spark_argument);
     command_type = msg.substring(0, 2).toInt();
     arg = "" + msg.substring(2);
 
@@ -353,6 +344,8 @@ void setup() {
 
     init_sensor(&tcsAssay);
     init_sensor(&tcsControl);
+
+    STATUS("Setup complete");
 }
 
 //
@@ -363,17 +356,18 @@ void setup() {
 
 void loop(){
     if (init_device) {
-        status_update(snprintf(status, STATUS_LENGTH, "Initializing device"));
+        STATUS("Initializing device");
         solenoid_out();
         reset_x_stage();
         analogWrite(pinLED, 0);
         device_ready = true;
         init_device = false;
+        STATUS("Device initialized and ready to run assay");
     }
 
     if (device_ready && run_assay) {
         device_ready = false;
-        status_update(snprintf(status, STATUS_LENGTH, "Running BreviTest..."));
+        STATUS("Running assay...");
 
         analogWrite(pinLED, 20);
 
@@ -384,16 +378,13 @@ void loop(){
         move_to_next_well_and_raster(1000, 10, "buffer");
         move_to_next_well_and_raster(1000, 14, "indicator");
 
-        status_update(snprintf(status, STATUS_LENGTH, "Reading sensors"));
         collect_sensor_readings();
 
-        status_update(snprintf(status, STATUS_LENGTH, "Clean up"));
+        STATUS("Finishing assay");
         reset_x_stage();
         analogWrite(pinLED, 0);
 
-        status_update(snprintf(status, STATUS_LENGTH, "BreviTest run complete."));
+        STATUS("Assay complete.");
         run_assay = false;
     }
-
-    delay(500);
 }
