@@ -8,7 +8,7 @@
 unsigned long start_time;
 
 // status
-#define STATUS_LENGTH 1000
+#define STATUS_LENGTH 623
 char status[STATUS_LENGTH];
 bool device_ready = false;
 bool init_device = false;
@@ -49,9 +49,10 @@ int solenoidSurgePeriod = 200; // milliseconds
 #define SENSOR_MS_BETWEEN_SAMPLES 1000
 String assay_result[2*SENSOR_SAMPLES];
 
-TCS34725 tcsAssay = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinAssaySDA, pinAssaySCL);
-TCS34725 tcsControl = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, pinControlSDA, pinControlSCL);
+tcs34725IntegrationTime_t integration_time = TCS34725_INTEGRATIONTIME_50MS;
+tcs34725Gain_t gain = TCS34725_GAIN_4X;
 
+TCS34725 tcsAssay, tcsControl;
 
 //
 //
@@ -170,7 +171,9 @@ void move_to_next_well_and_raster(int path_length, int well_size, const char *we
 //
 //
 
-void init_sensor(TCS34725 *sensor) {
+void init_sensor(TCS34725 *sensor, int sdaPin, int sclPin) {
+    *sensor = TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, sdaPin, sclPin);
+
     if (sensor->begin()) {
         sensor->enable();
     }
@@ -195,7 +198,6 @@ void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number, char *bu
 
 void collect_sensor_readings() {
     char buf[64];
-    STATUS("Collecting sensor data");
     start_time = millis();
     for (int i = 0; i < 10; i += 1) {
         read_sensor(&tcsAssay, 'A', i, buf);
@@ -334,10 +336,16 @@ int run_command(String msg) {
 }
 
 int sensor_data(String msg) {
+    init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
+    init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
     analogWrite(pinLED, 20);
-    delay(1000);
+    delay(10000);
+
     collect_sensor_readings();
+
     analogWrite(pinLED, 0);
+    tcsAssay.disable();
+    tcsControl.disable();
     return 1;
 }
 
@@ -371,9 +379,6 @@ void setup() {
 
     Serial.begin(9600);
 
-    init_sensor(&tcsAssay);
-    init_sensor(&tcsControl);
-
     STATUS("Setup complete");
 }
 
@@ -386,6 +391,10 @@ void setup() {
 void loop(){
     if (init_device) {
         STATUS("Initializing device");
+
+        init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
+        init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
+
         solenoid_out();
         reset_x_stage();
         analogWrite(pinLED, 0);
@@ -402,7 +411,7 @@ void loop(){
 
         analogWrite(pinLED, 20);
 
-        move_to_next_well_and_raster(2000, 10, "sample");
+        move_to_next_well_and_raster(6000, 10, "sample");
         move_to_next_well_and_raster(1000, 10, "antibody");
         move_to_next_well_and_raster(1000, 10, "buffer");
         move_to_next_well_and_raster(1000, 10, "enzyme");
@@ -412,8 +421,11 @@ void loop(){
         collect_sensor_readings();
 
         STATUS("Finishing assay");
-        reset_x_stage();
         analogWrite(pinLED, 0);
+        tcsAssay.disable();
+        tcsControl.disable();
+
+        reset_x_stage();
 
         STATUS("Assay complete.");
         run_assay = false;
