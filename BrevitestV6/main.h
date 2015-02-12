@@ -22,6 +22,8 @@ FlashDevice* flash;
 #define UUID_LENGTH 32
 #define REQUEST_CODE_LENGTH 2
 #define COMMAND_CODE_LENGTH 2
+#define PARAM_CODE_LENGTH 2
+#define MAX_PARAM_OFFSET 135
 
 // status
 #define STATUS_LENGTH 623
@@ -62,7 +64,9 @@ char spark_argument[SPARK_ARG_SIZE + 1];
 
 struct Param {
     // stepper
-    int step_delay_us;  // microseconds
+    int step_delay_raster_us;  // microseconds
+    int step_delay_transit_us;  // microseconds
+    int step_delay_reset_us;  // microseconds
     int steps_per_raster;
     int stepper_wifi_ping_rate;
     int stepper_wake_delay_ms; // milliseconds
@@ -79,7 +83,9 @@ struct Param {
     int solenoid_cycles_per_raster;
 
     // sensors
+    char blank1;
     tcs34725IntegrationTime_t integration_time;
+    char blank2;
     tcs34725Gain_t gain;
     int sensor_number_of_collections;
     int sensor_ms_between_samples;
@@ -105,7 +111,9 @@ struct Param {
     {
         //  DEFAULT VALUES
         // stepper
-        step_delay_us = 1800;
+        step_delay_raster_us = 1800;  // microseconds
+        step_delay_transit_us = 3000;  // microseconds
+        step_delay_reset_us = 1200;  // microseconds
         steps_per_raster = 100;
         stepper_wifi_ping_rate = 100;
         stepper_wake_delay_ms = 5; // milliseconds
@@ -122,7 +130,9 @@ struct Param {
         solenoid_cycles_per_raster = 5;
 
         // sensors
+        blank1 = (char) 0x00;
         integration_time = TCS34725_INTEGRATIONTIME_50MS;
+        blank2 = (char) 0x00;
         gain = TCS34725_GAIN_4X;
         sensor_number_of_collections = 1;
         sensor_ms_between_samples = 1000;

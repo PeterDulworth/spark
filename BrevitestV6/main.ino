@@ -31,7 +31,7 @@ void solenoid_out() {
 //
 //
 
-void move_steps(long steps){
+void move_steps(long steps, int step_delay){
     //rotate a specific number of steps - negative for reverse movement
 
     wake_stepper();
@@ -51,10 +51,10 @@ void move_steps(long steps){
         }
 
         digitalWrite(pinStepperStep, HIGH);
-        delayMicroseconds(brevitest.step_delay_us);
+        delayMicroseconds(step_delay);
 
         digitalWrite(pinStepperStep, LOW);
-        delayMicroseconds(brevitest.step_delay_us);
+        delayMicroseconds(step_delay);
     }
 
     sleep_stepper();
@@ -81,7 +81,7 @@ bool limitSwitchOn() {
 
 void reset_x_stage() {
     STATUS("Resetting device");
-    move_steps(brevitest.steps_to_reset);
+    move_steps(brevitest.steps_to_reset, brevitest.step_delay_reset_us);
 }
 
 void raster_well(int number_of_rasters) {
@@ -89,7 +89,7 @@ void raster_well(int number_of_rasters) {
         if (limitSwitchOn()) {
             return;
         }
-        move_steps(brevitest.steps_per_raster);
+        move_steps(brevitest.steps_per_raster, brevitest.step_delay_raster_us);
         if (i < 1) {
             delay(brevitest.solenoid_first_off_ms);
             solenoid_in(true);
@@ -110,7 +110,7 @@ void raster_well(int number_of_rasters) {
 
 void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name) {
     STATUS("Moving to %s well", well_name);
-    move_steps(path_length);
+    move_steps(path_length, brevitest.step_delay_transit_us);
 
     STATUS("Rastering %s well", well_name);
     raster_well(well_size);
@@ -202,6 +202,19 @@ void collect_sensor_readings(int assay_time) {
     write_sensor_readings_to_flash(assay_time);
 }
 
+void recollect_sensor_data() {
+    init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
+    init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
+    analogWrite(pinLED, brevitest.led_power);
+    delay(brevitest.led_warmup_ms);
+
+    collect_sensor_readings(Time.now());
+
+    analogWrite(pinLED, 0);
+    tcsAssay.disable();
+    tcsControl.disable();
+}
+
 //
 //
 //  MAIN FUNCTIONS
@@ -256,6 +269,12 @@ void get_serial_number() {
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         spark_register[EEPROM_ADDR_SERIAL_NUMBER + i] = (char) EEPROM.read(i);
     }
+}
+
+void get_params() {
+    int len = sizeof(brevitest);
+    flash->read(spark_register, 0, len);
+    spark_register[len] = '\0';
 }
 
 int write_serial_number(String msg) {
@@ -314,6 +333,9 @@ int request_data(String msg) {
             case 3: // archived sensor data
                 get_archived_sensor_data(request);
                 break;
+            case 4: // params
+                get_params();
+                break;
         }
         return (spark_register[0] == '\0' ? -1 : 1);
     }
@@ -345,21 +367,30 @@ int run_command(String msg) {
             return initialize_device();
         case 2: // run assay
             return run_brevitest();
+        case 3: // collect sensor data
+            return recollect_sensor_data();
     }
     return -1;
 }
 
-int sensor_data(String msg) {
-    init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
-    init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
-    analogWrite(pinLED, brevitest.led_power);
-    delay(brevitest.led_warmup_ms);
+int change_param(String msg) {
+    int param_index, valueInt;
+    String value;
+    void *ptr;
 
-    collect_sensor_readings(Time.now());
+    msg.toCharArray(spark_argument, SPARK_ARG_SIZE);
+    STATUS("Changing parameter: %s", spark_argument);
+    param_index = msg.substring(0, PARAM_CODE_LENGTH).toInt();
+    if (param_index > MAX_PARAM_OFFSET) {
+        ERROR("Parameter index out of range");
+        return -1;
+    }
+    value = "" + msg.substring(PARAM_CODE_LENGTH);
+    ptr = &brevitest + param_index;
+    *ptr = value.toInt();
 
-    analogWrite(pinLED, 0);
-    tcsAssay.disable();
-    tcsControl.disable();
+    flash->write(ptr, param_index, 4);
+
     return 1;
 }
 
@@ -400,7 +431,7 @@ void load_params() {
 void setup() {
     Spark.function("runcommand", run_command);
     Spark.function("requestdata", request_data);
-    Spark.function("sensordata", sensor_data);
+    Spark.function("changeparam", change_param);
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", status, STRING);
 
@@ -467,12 +498,12 @@ void loop(){
 
         analogWrite(pinLED, brevitest.led_power);
 
-        move_to_next_well_and_raster(6000, 10, "sample");
-        move_to_next_well_and_raster(1000, 10, "antibody");
-        move_to_next_well_and_raster(1000, 10, "buffer");
-        move_to_next_well_and_raster(1000, 10, "enzyme");
-        move_to_next_well_and_raster(1000, 10, "buffer");
-        move_to_next_well_and_raster(1000, 14, "indicator");
+        move_to_next_well_and_raster(brevitest.steps_to_sample_well, brevitest.sample_well_rasters, "sample");
+        move_to_next_well_and_raster(brevitest.steps_to_antibody_well, brevitest.antibody_well_rasters, "antibody");
+        move_to_next_well_and_raster(brevitest.steps_to_first_buffer_well, brevitest.first_buffer_well_rasters, "first buffer");
+        move_to_next_well_and_raster(brevitest.steps_to_enzyme_well, brevitest.enzyme_well_rasters, "enzyme");
+        move_to_next_well_and_raster(brevitest.steps_to_second_buffer_well, brevitest.second_buffer_well_rasters, "second buffer");
+        move_to_next_well_and_raster(brevitest.steps_to_indicator_well, brevitest.indicator_well_rasters, "indicator");
 
         collect_sensor_readings(assay_start_time);
 
