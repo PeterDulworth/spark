@@ -23,13 +23,18 @@ FlashDevice* flash;
 #define REQUEST_CODE_LENGTH 2
 #define COMMAND_CODE_LENGTH 2
 #define PARAM_CODE_LENGTH 2
-#define MAX_PARAM_OFFSET 135
+#define NUMBER_OF_PARAMS 33
+#define PARAM_TOTAL_LENGTH 132
 
 // status
 #define STATUS_LENGTH 623
-char status[STATUS_LENGTH];
-#define STATUS(...) snprintf(status, STATUS_LENGTH, __VA_ARGS__)
+#define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
 #define ERROR(err) Serial.println(err)
+
+// device
+#define SENSOR_RECORD_LENGTH 28
+#define SPARK_REGISTER_SIZE 623
+#define SPARK_ARG_SIZE 63
 
 // pin definitions
 int pinSolenoid = A1;
@@ -44,23 +49,36 @@ int pinControlSDA = D5;
 int pinControlSCL = D6;
 
 // global variables
-String uuid;
+char uuid[UUID_LENGTH + 1];
 bool device_ready;
 bool init_device;
 bool run_assay;
 
 // sensors
-#define SENSOR_RECORD_LENGTH 28
 char assay_result[2 * NUMBER_OF_SENSOR_SAMPLES][SENSOR_RECORD_LENGTH + 1];
-
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
 
 // spark messaging
-#define SPARK_REGISTER_SIZE 623
-#define SPARK_ARG_SIZE 63
-char spark_register[SPARK_REGISTER_SIZE];
-char spark_argument[SPARK_ARG_SIZE + 1];
+char spark_register[SPARK_REGISTER_SIZE + 1];
+char spark_status[STATUS_LENGTH];
+
+struct Command {
+    char arg[SPARK_ARG_SIZE + 1];
+    int code;
+    char param[SPARK_ARG_SIZE - COMMAND_CODE_LENGTH + 1];
+} spark_command;
+
+struct Request {
+    bool pending;
+    char arg[SPARK_ARG_SIZE + 1];
+    char uuid[UUID_LENGTH + 1];
+    int code;
+    char param[SPARK_ARG_SIZE - UUID_LENGTH - REQUEST_CODE_LENGTH + 1];
+    Request() {
+        pending = false;
+    }
+} spark_request;
 
 struct Param {
     // stepper
@@ -83,10 +101,7 @@ struct Param {
     int solenoid_cycles_per_raster;
 
     // sensors
-    char blank1;
-    tcs34725IntegrationTime_t integration_time;
-    char blank2;
-    tcs34725Gain_t gain;
+    int sensor_params;
     int sensor_number_of_collections;
     int sensor_ms_between_samples;
     int led_power;
@@ -107,8 +122,7 @@ struct Param {
     int steps_to_indicator_well;
     int indicator_well_rasters;
 
-    Param()
-    {
+    Param() {
         //  DEFAULT VALUES
         // stepper
         step_delay_raster_us = 1800;  // microseconds
@@ -130,10 +144,7 @@ struct Param {
         solenoid_cycles_per_raster = 5;
 
         // sensors
-        blank1 = (char) 0x00;
-        integration_time = TCS34725_INTEGRATIONTIME_50MS;
-        blank2 = (char) 0x00;
-        gain = TCS34725_GAIN_4X;
+        sensor_params = TCS34725_INTEGRATIONTIME_50MS << 8 + TCS34725_GAIN_4X;
         sensor_number_of_collections = 1;
         sensor_ms_between_samples = 1000;
         led_power = 20;
