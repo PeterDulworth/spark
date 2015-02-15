@@ -355,7 +355,7 @@ int recollect_sensor_data() {
     delay(brevitest.led_warmup_ms);
 
     int t = Time.now();
-    collect_sensor_readings(t)
+    collect_sensor_readings(t);
 
     analogWrite(pinLED, 0);
     tcsAssay.disable();
@@ -420,6 +420,11 @@ int get_archive_size() {
 int get_firmware_version() {
     int version = EEPROM.read(0);
     return version;
+}
+
+int cancel_current_process() {
+    cancel_process = true;
+    return 1;
 }
 
 //
@@ -500,6 +505,8 @@ int run_command(String msg) {
             return get_archive_size();
         case 9: // get current firmware version number
             return get_firmware_version();
+        case 10: // cancel process
+            return cancel_current_process();
         default:
             return -1;
     }
