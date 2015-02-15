@@ -7,15 +7,18 @@
 
 // flash
 FlashDevice* flash;
-#define MAX_RESULTS_STORED_IN_FLASH 1024
-#define ASSAY_RECORD_HEADER_SIZE 64
-#define ASSAY_RECORD_HEADER_START_ADDR 512
-#define ASSAY_RECORD_HEADER_ADDR_OFFSET 36
-#define ASSAY_RECORD_HEADER_LENGTH_OFFSET 40
-#define ASSAY_RECORD_HEADER_TIME_OFFSET 44
-#define ASSAY_RECORD_SIZE 32
-#define ASSAY_RECORD_START_ADDR 66048
-#define NUMBER_OF_SENSOR_SAMPLES 10
+#define FLASH_RECORD_CAPACITY 1024
+#define FLASH_OVERFLOW_ADDRESS 414212
+
+// assay
+#define ASSAY_NUMBER_OF_RECORDS_ADDR 512
+#define ASSAY_RECORD_HEADER_LENGTH 64
+#define ASSAY_RECORD_HEADER_START_ADDR 516
+#define ASSAY_RECORD_DATA_LENGTH 640
+#define ASSAY_RECORD_START_ADDR 66052
+
+#define ASSAY_NUMBER_OF_SAMPLES 10
+#define ASSAY_SAMPLE_LENGTH 31
 
 // eeprom addresses
 #define EEPROM_ADDR_DEFAULT_FLAG 0
@@ -37,7 +40,6 @@ FlashDevice* flash;
 #define ERROR_MESSAGE(err) Serial.println(err)
 
 // device
-#define SENSOR_RECORD_LENGTH 28
 #define SPARK_REGISTER_SIZE 623
 #define SPARK_ARG_SIZE 63
 
@@ -60,7 +62,7 @@ bool init_device;
 bool run_assay;
 
 // sensors
-char assay_result[2 * NUMBER_OF_SENSOR_SAMPLES][SENSOR_RECORD_LENGTH + 1];
+char assay_result[2 * ASSAY_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH ];
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
 
@@ -84,6 +86,31 @@ struct Request {
         pending = false;
     }
 } spark_request;
+
+struct BrevitestHeader {
+    int num;
+    int data_addr;
+    int data_length;
+    int assay_start_time;
+    char uuid[32];
+    char reserved[16];
+    BrevitestHeader() {
+        num = 0;
+        data_addr = 0;
+        data_length = 0;
+        assay_start_time = 0;
+    }
+};
+
+struct BrevitestRecord {
+    char sensor_code;
+    char reading_number[2];
+    char reading_time[11];
+    char clear[5];
+    char red[5];
+    char green[5];
+    char blue[5];
+};
 
 struct Param {
     // stepper

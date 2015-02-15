@@ -63,9 +63,6 @@ uint8_t TCS34725::read8(uint8_t reg)
 {
   uint16_t res;
 
-  Serial.print("read8: ");
-  Serial.println(reg, HEX);
-
   _i2c.beginReadTransmission(TCS34725_ADDRESS, (uint8_t) TCS34725_COMMAND_BIT | reg);
   res = _i2c.readLast();
   _i2c.endTransmission();
@@ -152,7 +149,6 @@ TCS34725::TCS34725(tcs34725IntegrationTime_t it, tcs34725Gain_t gain, uint8_t sd
 bool TCS34725::begin(void)
 {
   /* Make sure we're actually connected */
-//  Serial.print("Sensor address: ");
   uint8_t x = read8(TCS34725_ID);
   if (x != 0x44)
   {
