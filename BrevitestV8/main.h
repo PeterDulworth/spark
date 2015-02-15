@@ -5,7 +5,7 @@
 
 // GLOBAL VARIABLES AND DEFINES
 
-#define FIRMWARE_VERSION 0x07
+#define FIRMWARE_VERSION 0x08
 
 // flash
 FlashDevice* flash;
@@ -42,6 +42,7 @@ FlashDevice* flash;
 #define STATUS_LENGTH 623
 #define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
 #define ERROR_MESSAGE(err) Serial.println(err)
+#define CANCELLABLE(x) if (!cancel_process) {x}
 
 // device
 #define SPARK_REGISTER_SIZE 623
@@ -64,6 +65,7 @@ char uuid[UUID_LENGTH + 1];
 bool device_ready;
 bool init_device;
 bool run_assay;
+bool collect_sensor_data;
 bool cancel_process;
 
 // sensors
