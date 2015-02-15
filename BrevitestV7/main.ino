@@ -171,6 +171,7 @@ void write_sensor_readings_to_flash(int ref_time) {
     header.data_addr = get_flash_assay_data_address(index);
     header.data_length = ASSAY_RECORD_DATA_LENGTH;
     header.assay_start_time = ref_time;
+    header.param = brevitest;
 
     // write header
     flash->write(&header, header_addr, ASSAY_RECORD_HEADER_LENGTH);
@@ -257,7 +258,9 @@ void get_archived_assay_header() {
             flash->read(&header, header_addr, ASSAY_RECORD_HEADER_LENGTH);
 
             sprintf(spark_register,"%4d%08x%2d%08x", header.num, header.data_addr, header.data_length, header.assay_start_time);
-            spark_register[22] = '\0';
+            spark_register[22] = '\n';
+            header_addr += ASSAY_RECORD_HEADER_PARAM_OFFSET;
+            get_all_params(header_addr, 23);
         }
     }
 }
@@ -298,12 +301,11 @@ void get_one_param() {
     Serial.println(String(spark_register));
 }
 
-void get_all_params() {
+void get_all_params(int offset, int index) {
     int value, len;
-    int index = 0;
 
     for (int i = 0; i < PARAM_TOTAL_LENGTH; i += 4) {
-        flash->read(&value, i, 4);
+        flash->read(&value, i + offset, 4);
         len = sprintf(&spark_register[index], "%d,", value);
         index += len;
     }
@@ -352,7 +354,8 @@ int recollect_sensor_data() {
     STATUS("Warming up sensor LEDs");
     delay(brevitest.led_warmup_ms);
 
-    collect_sensor_readings(Time.now());
+    int t = Time.now();
+    collect_sensor_readings(t);
 
     analogWrite(pinLED, 0);
     tcsAssay.disable();
@@ -414,6 +417,11 @@ int get_archive_size() {
     return count;
 }
 
+int get_firmware_version() {
+    int version = EEPROM.read(0);
+    return version;
+}
+
 //
 //
 //  EXPOSED FUNCTIONS
@@ -456,7 +464,7 @@ int request_data(String msg) {
                 get_archived_assay_record();
                 break;
             case 5: // all parameters
-                get_all_params();
+                get_all_params(0, 0);
                 break;
             case 6: // one parameter
                 get_one_param();
@@ -490,6 +498,8 @@ int run_command(String msg) {
             return dump_archive();
         case 8: // dump archive to serial port
             return get_archive_size();
+        case 9: // get current firmware version number
+            return get_firmware_version();
         default:
             return -1;
     }
@@ -586,8 +596,8 @@ void setup() {
 //        Spark.process();
 //    }
 
-    if (EEPROM.read(0) == 0xFF) {  // new spark, set number of records to zero
-        EEPROM.write(0, 0x00);
+    if (EEPROM.read(0) != FIRMWARE_VERSION) {  // check for current firmware version
+        EEPROM.write(0, FIRMWARE_VERSION);
     }
 
     flash = Devices::createWearLevelErase();

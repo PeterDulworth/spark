@@ -5,17 +5,21 @@
 
 // GLOBAL VARIABLES AND DEFINES
 
+#define FIRMWARE_VERSION 0x07
+
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 1024
-#define FLASH_OVERFLOW_ADDRESS 414212
+#define FLASH_RECORD_CAPACITY 512
+#define FLASH_OVERFLOW_ADDRESS 545284
 
 // assay
 #define ASSAY_NUMBER_OF_RECORDS_ADDR 512
-#define ASSAY_RECORD_HEADER_LENGTH 64
+#define ASSAY_RECORD_HEADER_LENGTH 384
 #define ASSAY_RECORD_HEADER_START_ADDR 516
+#define ASSAY_RECORD_HEADER_PARAM_OFFSET 48
+#define ASSAY_RECORD_HEADER_PARAM_LENGTH 132
 #define ASSAY_RECORD_DATA_LENGTH 640
-#define ASSAY_RECORD_START_ADDR 66052
+#define ASSAY_RECORD_START_ADDR 197124
 
 #define ASSAY_NUMBER_OF_SAMPLES 10
 #define ASSAY_SAMPLE_LENGTH 31
@@ -62,13 +66,13 @@ bool init_device;
 bool run_assay;
 
 // sensors
-char assay_result[2 * ASSAY_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH ];
+char assay_result[2 * ASSAY_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
 
 // spark messaging
 char spark_register[SPARK_REGISTER_SIZE + 1];
-char spark_status[STATUS_LENGTH];
+char spark_status[STATUS_LENGTH + 1];
 
 struct Command {
     char arg[SPARK_ARG_SIZE + 1];
@@ -86,31 +90,6 @@ struct Request {
         pending = false;
     }
 } spark_request;
-
-struct BrevitestHeader {
-    int num;
-    int data_addr;
-    int data_length;
-    int assay_start_time;
-    char uuid[32];
-    char reserved[16];
-    BrevitestHeader() {
-        num = 0;
-        data_addr = 0;
-        data_length = 0;
-        assay_start_time = 0;
-    }
-};
-
-struct BrevitestRecord {
-    char sensor_code;
-    char reading_number[2];
-    char reading_time[11];
-    char clear[5];
-    char red[5];
-    char green[5];
-    char blue[5];
-};
 
 struct Param {
     // stepper
@@ -153,6 +132,9 @@ struct Param {
     int second_buffer_well_rasters;
     int steps_to_indicator_well;
     int indicator_well_rasters;
+
+    // reserved
+    int reserved[31];
 
     Param() {
         //  DEFAULT VALUES
@@ -198,3 +180,29 @@ struct Param {
         indicator_well_rasters = 14;
     }
 } brevitest;
+
+struct BrevitestHeader {
+    int num;
+    int data_addr;
+    int data_length;
+    int assay_start_time;
+    char uuid[32];
+    Param param;
+    char reserved[80];
+    BrevitestHeader() {
+        num = 0;
+        data_addr = 0;
+        data_length = 0;
+        assay_start_time = 0;
+    }
+};
+
+struct BrevitestRecord {
+    char sensor_code;
+    char reading_number[2];
+    char reading_time[11];
+    char clear[5];
+    char red[5];
+    char green[5];
+    char blue[5];
+};
