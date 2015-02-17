@@ -116,9 +116,15 @@ void raster_well(int number_of_rasters) {
     delay(4000);
 }
 
-void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name) {
+void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name, bool first_well) {
     STATUS("Moving to %s well", well_name);
-    move_steps(path_length, brevitest.step_delay_transit_us);
+    if (first_well) {
+        move_steps(path_length, brevitest.step_delay_reset_us);
+    }
+    else {
+        move_steps(brevitest.steps_for_meniscus_transition, brevitest.step_delay_meniscus_us);
+        move_steps(path_length - brevitest.steps_for_meniscus_transition, brevitest.step_delay_transit_us);
+    }
 
     STATUS("Rastering %s well", well_name);
     raster_well(well_size);
@@ -649,12 +655,12 @@ void loop(){
 
         analogWrite(pinLED, brevitest.led_power);
 
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_sample_well, brevitest.sample_well_rasters, "sample");)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_antibody_well, brevitest.antibody_well_rasters, "antibody");)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_first_buffer_well, brevitest.first_buffer_well_rasters, "first buffer");)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_enzyme_well, brevitest.enzyme_well_rasters, "enzyme");)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_second_buffer_well, brevitest.second_buffer_well_rasters, "second buffer");)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_indicator_well, brevitest.indicator_well_rasters, "indicator");)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_sample_well, brevitest.sample_well_rasters, "sample", true);)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_antibody_well, brevitest.antibody_well_rasters, "antibody", false);)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_first_buffer_well, brevitest.first_buffer_well_rasters, "first buffer", false);)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_enzyme_well, brevitest.enzyme_well_rasters, "enzyme", false);)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_second_buffer_well, brevitest.second_buffer_well_rasters, "second buffer", false);)
+        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_indicator_well, brevitest.indicator_well_rasters, "indicator", false);)
 
         CANCELLABLE(collect_sensor_readings(assay_start_time);)
 

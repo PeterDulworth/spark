@@ -35,8 +35,9 @@ FlashDevice* flash;
 #define REQUEST_CODE_LENGTH 2
 #define COMMAND_CODE_LENGTH 2
 #define PARAM_CODE_LENGTH 3
-#define NUMBER_OF_PARAMS 33
-#define PARAM_TOTAL_LENGTH 132
+#define MAX_NUMBER_OF_PARAMS 64
+#define NUMBER_OF_PARAMS 35
+#define PARAM_TOTAL_LENGTH 140
 
 // status
 #define STATUS_LENGTH 623
@@ -136,15 +137,18 @@ struct Param {
     int steps_to_indicator_well;
     int indicator_well_rasters;
 
+    int step_delay_meniscus_us;
+    int steps_for_meniscus_transition;
+
     // reserved
-    int reserved[31];
+    int reserved[MAX_NUMBER_OF_PARAMS - NUMBER_OF_PARAMS];
 
     Param() {
         //  DEFAULT VALUES
         // stepper
         step_delay_raster_us = 1800;  // microseconds
-        step_delay_transit_us = 3000;  // microseconds
-        step_delay_reset_us = 1200;  // microseconds
+        step_delay_transit_us = 2000;  // microseconds
+        step_delay_reset_us = 1200;  // microseconds, fastest mode
         steps_per_raster = 100;
         stepper_wifi_ping_rate = 100;
         stepper_wake_delay_ms = 5; // milliseconds
@@ -169,7 +173,8 @@ struct Param {
 
         // device
         steps_to_reset = -30000;
-        steps_to_sample_well = 6000;
+        steps_for_meniscus_transition = 200;
+        steps_to_sample_well = 4200;
         sample_well_rasters = 10;
         steps_to_antibody_well = 1000;
         antibody_well_rasters = 10;
@@ -181,6 +186,9 @@ struct Param {
         second_buffer_well_rasters = 10;
         steps_to_indicator_well = 1000;
         indicator_well_rasters = 14;
+
+        step_delay_meniscus_us = 6000;  // microseconds
+        steps_for_meniscus_transition = 200;
     }
 } brevitest;
 
