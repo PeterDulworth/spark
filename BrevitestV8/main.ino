@@ -415,7 +415,7 @@ int dump_archive() {
 }
 
 int get_archive_size() {
-    int count = 0;
+    int count;
     flash->read(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
     return count;
 }
@@ -613,6 +613,13 @@ void setup() {
     flash = Devices::createWearLevelErase();
 
     read_params();
+
+    int count;
+    flash->read(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
+    if (count == -1) { // brand new core
+        count = 0;
+        flash->write(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
+    }
 
     device_ready = false;
     init_device = false;
