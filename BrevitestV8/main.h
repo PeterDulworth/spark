@@ -35,7 +35,7 @@ FlashDevice* flash;
 #define COMMAND_CODE_LENGTH 2
 #define PARAM_CODE_LENGTH 3
 #define MAX_NUMBER_OF_PARAMS 64
-#define NUMBER_OF_PARAMS 35
+#define NUMBER_OF_PARAMS 36
 #define PARAM_TOTAL_LENGTH (NUMBER_OF_PARAMS * 4)
 
 // status
@@ -138,6 +138,7 @@ struct Param {
 
     int step_delay_meniscus_us;
     int steps_for_meniscus_transition;
+    int solenoid_start_well_ms;
 
     // reserved
     int reserved[MAX_NUMBER_OF_PARAMS - NUMBER_OF_PARAMS];
@@ -188,6 +189,7 @@ struct Param {
 
         step_delay_meniscus_us = 6000;  // microseconds
         steps_for_meniscus_transition = 200;
+        solenoid_start_well_ms = 4000;
     }
 } brevitest;
 

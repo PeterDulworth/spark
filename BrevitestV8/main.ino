@@ -93,6 +93,7 @@ void reset_x_stage() {
 }
 
 void raster_well(int number_of_rasters) {
+    delay(brevitest.solenoid_start_well_ms);
     for (int i = 0; i < number_of_rasters; i += 1) {
         if (cancel_process || limitSwitchOn()) {
             return;
@@ -113,7 +114,7 @@ void raster_well(int number_of_rasters) {
             }
         }
     }
-    delay(4000);
+    delay(brevitest.solenoid_finish_well_ms);
 }
 
 void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name, bool first_well) {
@@ -127,7 +128,7 @@ void move_to_next_well_and_raster(int path_length, int well_size, const char *we
     }
 
     STATUS("Rastering %s well", well_name);
-    raster_well(well_size);
+    CANCELLABLE(raster_well(well_size);)
 }
 
 //
