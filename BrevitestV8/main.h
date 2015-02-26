@@ -5,7 +5,7 @@
 
 // GLOBAL VARIABLES AND DEFINES
 
-#define FIRMWARE_VERSION 0x07
+#define FIRMWARE_VERSION 0x08
 
 // flash
 FlashDevice* flash;
@@ -17,7 +17,6 @@ FlashDevice* flash;
 #define ASSAY_RECORD_HEADER_LENGTH 384
 #define ASSAY_RECORD_HEADER_START_ADDR 516
 #define ASSAY_RECORD_HEADER_PARAM_OFFSET 48
-#define ASSAY_RECORD_HEADER_PARAM_LENGTH 132
 #define ASSAY_RECORD_DATA_LENGTH 640
 #define ASSAY_RECORD_START_ADDR 197124
 
@@ -35,13 +34,15 @@ FlashDevice* flash;
 #define REQUEST_CODE_LENGTH 2
 #define COMMAND_CODE_LENGTH 2
 #define PARAM_CODE_LENGTH 3
-#define NUMBER_OF_PARAMS 33
-#define PARAM_TOTAL_LENGTH 132
+#define MAX_NUMBER_OF_PARAMS 64
+#define NUMBER_OF_PARAMS 36
+#define PARAM_TOTAL_LENGTH (NUMBER_OF_PARAMS * 4)
 
 // status
 #define STATUS_LENGTH 623
 #define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
 #define ERROR_MESSAGE(err) Serial.println(err)
+#define CANCELLABLE(x) if (!cancel_process) {x}
 
 // device
 #define SPARK_REGISTER_SIZE 623
@@ -64,6 +65,7 @@ char uuid[UUID_LENGTH + 1];
 bool device_ready;
 bool init_device;
 bool run_assay;
+bool collect_sensor_data;
 bool cancel_process;
 
 // sensors
@@ -134,15 +136,19 @@ struct Param {
     int steps_to_indicator_well;
     int indicator_well_rasters;
 
+    int step_delay_meniscus_us;
+    int steps_for_meniscus_transition;
+    int solenoid_start_well_ms;
+
     // reserved
-    int reserved[31];
+    int reserved[MAX_NUMBER_OF_PARAMS - NUMBER_OF_PARAMS];
 
     Param() {
         //  DEFAULT VALUES
         // stepper
         step_delay_raster_us = 1800;  // microseconds
-        step_delay_transit_us = 3000;  // microseconds
-        step_delay_reset_us = 1200;  // microseconds
+        step_delay_transit_us = 2000;  // microseconds
+        step_delay_reset_us = 1200;  // microseconds, fastest mode
         steps_per_raster = 100;
         stepper_wifi_ping_rate = 100;
         stepper_wake_delay_ms = 5; // milliseconds
@@ -167,7 +173,8 @@ struct Param {
 
         // device
         steps_to_reset = -30000;
-        steps_to_sample_well = 6000;
+        steps_for_meniscus_transition = 200;
+        steps_to_sample_well = 4200;
         sample_well_rasters = 10;
         steps_to_antibody_well = 1000;
         antibody_well_rasters = 10;
@@ -179,6 +186,10 @@ struct Param {
         second_buffer_well_rasters = 10;
         steps_to_indicator_well = 1000;
         indicator_well_rasters = 14;
+
+        step_delay_meniscus_us = 6000;  // microseconds
+        steps_for_meniscus_transition = 200;
+        solenoid_start_well_ms = 4000;
     }
 } brevitest;
 
