@@ -65,6 +65,7 @@ char uuid[UUID_LENGTH + 1];
 bool device_ready;
 bool init_device;
 bool run_assay;
+char assay_uuid[UUID_LENGTH + 1];
 bool collect_sensor_data;
 bool cancel_process;
 

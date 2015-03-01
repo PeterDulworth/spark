@@ -587,6 +587,7 @@ void setup() {
     Spark.function("requestdata", request_data);
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", spark_status, STRING);
+    Spark.variable("assayrunning", assay_uuid, STRING);
 
     pinMode(pinSolenoid, OUTPUT);
     pinMode(pinStepperStep, OUTPUT);
