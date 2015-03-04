@@ -360,6 +360,17 @@ int run_brevitest() {
         ERROR_MESSAGE("Device not ready. Please reset the device.");
         return -1;
     }
+    if (BCODE_length == 0) {
+        ERROR_MESSAGE("BCODE not found. Assay not started.");
+        return -1;
+    }
+    if (memcmp(BCODE_test_uuid, &spark_command.param, UUID_LENGTH) != 0) {
+        ERROR_MESSAGE("BCODE uuid doesn't match test uuid. Assay not started.");
+        return -1;
+    }
+
+    memcpy(assay_uuid, &spark_command.param, UUID_LENGTH);
+    assay_uuid[UUID_LENGTH] = '\0';
     run_assay = true;
     return 1;
 }
@@ -431,6 +442,61 @@ int cancel_current_process() {
     return 1;
 }
 
+int receive_BCODE() {
+    int num, uuid_cmp;
+
+    STATUS("Receiving BCODE payload");
+
+    num = extract_int_from_string(spark_command.param, 0, BCODE_NUM_LENGTH);
+    if (BCODE_count != num) {
+        ERROR_MESSAGE("BCODE index mismatch");
+        BCODE_length = 0;
+        return -1;
+    }
+    if (num == 0) { // first packet, contains number of packets (not including this packet)
+        BCODE_packets = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
+        memcpy(BCODE_test_uuid, &spark_command.param[BCODE_TEST_UUID_INDEX], UUID_LENGTH);
+        BCODE_index = 0;
+        BCODE_length = 0;
+    }
+    else { // payload packet, contains payload count, packet length, uuid, and payload
+        if (num <= BCODE_packets)
+            uuid_cmp = memcmp(BCODE_test_uuid, &spark_command.param[BCODE_TEST_UUID_INDEX], UUID_LENGTH);
+            if (uuid_cmp != 0) {
+                ERROR_MESSAGE("BCODE uuid mismatch");
+                BCODE_length = 0;
+                return -1;
+            }
+            BCODE_length = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
+            if ((BCODE_index + BCODE_length)) > MAX_BCODE_BUFFER_SIZE) {
+                ERROR_MESSAGE("BCODE buffer overflow");
+                BCODE_length = 0;
+                return -1;
+            }
+            memcpy(&BCODE_buffer[BCODE_index], &spark_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
+            BCODE_index += BCODE_length;
+        }
+        else {
+            ERROR_MESSAGE("BCODE packet overflow");
+            BCODE_length = 0;
+            return -1;
+        }
+    }
+
+    if (num < BCODE_packets) {
+        BCODE_count++;
+    }
+    else { // last packet
+        BCODE_length = BCODE_index;
+        BCODE_buffer[BCODE_length] = '\0';
+        BCODE_count = 0;
+        BCODE_packets = 0;
+        BCODE_index = 0;
+    }
+
+    return num;
+}
+
 //
 //
 //  EXPOSED FUNCTIONS
@@ -438,7 +504,7 @@ int cancel_current_process() {
 //
 
 int request_data(String msg) {
-    char new_uuid[UUID_LENGTH];
+    char new_uuid[UUID_LENGTH + 1];
 
     if (spark_request.pending) {
         msg.toCharArray(new_uuid, UUID_LENGTH + 1);
@@ -511,6 +577,8 @@ int run_command(String msg) {
             return get_firmware_version();
         case 10: // cancel process
             return cancel_current_process();
+        case 11: // receive BCODE string
+            return receive_BCODE()
         default:
             return -1;
     }
@@ -575,6 +643,109 @@ int extract_int_from_string(char *str, int pos, int len) {
     return atoi(buf);
 }
 
+//
+//
+//  BCODE
+//
+//
+
+int get_BCODE_param(int index, int *param) {
+    int end, i, start;
+
+    i = index;
+    while (i < MAX_BCODE_BUFFER_SIZE) {
+        if (BCODE_buffer[i] == '\n' || BCODE_buffer[i] == ',')
+            break;
+        }
+    }
+
+    *param = extract_int_from_str(BCODE_buffer, index, i - index - 1);
+    return (i + 1);
+}
+
+int process_one_BCODE_command(int cmd, int index) {
+    int param1, param2;
+
+    index += 2; // increment past command code
+
+    switch(cmd) {
+        case 0: // Start Assay(integration time, gain)
+            assay_start_time = Time.now();
+            index = get_BCODE_param(index, &param1);
+            index = get_BCODE_param(index, &param2);
+            break;
+        case 1: // Delay(milliseconds)
+            //
+            break;
+        case 2: // Move(number of steps, step delay)
+            //
+            break;
+        case 3: // Solenoid on(milliseconds)
+            //
+            break;
+        case 4: // Device LED on
+            //
+            break;
+        case 5: // Device LED off
+            //
+            break;
+        case 6: // Device LED blink(milliseconds)
+            //
+            break;
+        case 7: // Sensor LED on(power)
+            //
+            break;
+        case 8: // Sensor LED off
+            //
+            break;
+        case 9: // Read sensors(number of samples)
+            //
+            break;
+        case 10: // Read QR code
+            //
+            break;
+        case 11: // Disable sensor
+            //
+            break;
+        case 12: // Repeat begin(number of iterations)
+            //
+            break;
+        case 13: // Repeat end
+            //
+            break;
+        case 14: // Status(message length, message text)
+            //
+            break;
+        case 99: // Finish Assay
+            STATUS("Storing assay results and resetting device");
+            write_assay_results_to_flash(assay_start_time);
+            reset_x_stage();
+            break;
+    })
+}
+
+void process_BCODE() {
+    int cmd, index;
+    char[64] param;
+
+    Spark.process();
+    index = 0;
+    cmd = extract_int_from_string(BCODE_buffer, index, BCODE_COMMAND_LENGTH);
+    if (cmd != 0) {
+        cancel_process = true;
+        ERROR_MESSAGE("First BCODE command must be Start Assay. Test cancelled.")
+        return;
+    }
+    else {
+        index = process_one_BCODE_command(cmd, index);
+    }
+
+    while ((cmd != 99) && (index != -1) && !cancel_process) {
+        Spark.process();
+        cmd = extract_int_from_string(BCODE_buffer, index, BCODE_COMMAND_LENGTH);
+        index = process_one_BCODE_command(cmd, index);
+    };
+}
 
 //
 //
@@ -629,6 +800,9 @@ void setup() {
     collect_sensor_data = false;
     cancel_process = false;
 
+    BCODE_count = 0;
+    BCODE_length = 0;
+
     spark_register[0] = '\0';
 
     STATUS("Setup complete");
@@ -660,28 +834,11 @@ void loop(){
         device_ready = false;
         STATUS("Running assay...");
 
-        int assay_start_time = Time.now();
-
-        analogWrite(pinLED, brevitest.led_power);
-
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_sample_well, brevitest.sample_well_rasters, "sample", true);)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_antibody_well, brevitest.antibody_well_rasters, "antibody", false);)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_first_buffer_well, brevitest.first_buffer_well_rasters, "first buffer", false);)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_enzyme_well, brevitest.enzyme_well_rasters, "enzyme", false);)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_second_buffer_well, brevitest.second_buffer_well_rasters, "second buffer", false);)
-        CANCELLABLE(move_to_next_well_and_raster(brevitest.steps_to_indicator_well, brevitest.indicator_well_rasters, "indicator", false);)
-
-        CANCELLABLE(collect_sensor_readings(assay_start_time);)
-
-        STATUS("Finishing assay");
-        analogWrite(pinLED, 0);
-        tcsAssay.disable();
-        tcsControl.disable();
-
-        CANCELLABLE(reset_x_stage();)
+        process_BCODE();
 
         STATUS("Assay complete.");
         run_assay = false;
+        assay_uuid[0] = '\0';
     }
 
     if (collect_sensor_data) {

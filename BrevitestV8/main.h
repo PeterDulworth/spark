@@ -47,6 +47,12 @@ FlashDevice* flash;
 // device
 #define SPARK_REGISTER_SIZE 623
 #define SPARK_ARG_SIZE 63
+#define MAX_BCODE_BUFFER_SIZE 2000
+#define BCODE_PAYLOAD_INDEX 37
+#define BCODE_NUM_LENGTH 3
+#define BCODE_LEN_LENGTH 2
+#define BCODE_TEST_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
+#define BCODE_COMMAND_LENGTH 2
 
 // pin definitions
 int pinSolenoid = A1;
@@ -61,13 +67,21 @@ int pinControlSDA = D5;
 int pinControlSCL = D6;
 
 // global variables
-char uuid[UUID_LENGTH + 1];
 bool device_ready;
 bool init_device;
 bool run_assay;
 char assay_uuid[UUID_LENGTH + 1];
+int assay_start_time;
 bool collect_sensor_data;
 bool cancel_process;
+
+// BCODE globals
+char BCODE_buffer[MAX_BCODE_BUFFER_SIZE];
+int BCODE_length;
+int BCODE_count;
+int BCODE_packets;
+int BCODE_index;
+char BCODE_test_uuid[UUID_LENGTH + 1];
 
 // sensors
 char assay_result[2 * ASSAY_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
