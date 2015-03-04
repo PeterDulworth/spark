@@ -232,8 +232,8 @@ void collect_sensor_readings(int assay_time) {
 //
 //
 
-void get_config_info() {
-    STATUS("Retrieving device configuration information");
+void get_serial_number() {
+    STATUS("Retrieving device serial number");
     spark_register[SERIAL_NUMBER_LENGTH] = '\0';
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         spark_register[i] = (char) EEPROM.read(EEPROM_ADDR_SERIAL_NUMBER + i);
@@ -450,6 +450,8 @@ int receive_BCODE() {
     num = extract_int_from_string(spark_command.param, 0, BCODE_NUM_LENGTH);
     if (BCODE_count != num) {
         ERROR_MESSAGE("BCODE index mismatch");
+        ERROR_MESSAGE(BCODE_count);
+        ERROR_MESSAGE(num);
         BCODE_length = 0;
         return -1;
     }
@@ -460,7 +462,7 @@ int receive_BCODE() {
         BCODE_length = 0;
     }
     else { // payload packet, contains payload count, packet length, uuid, and payload
-        if (num <= BCODE_packets)
+        if (num <= BCODE_packets) {
             uuid_cmp = memcmp(BCODE_test_uuid, &spark_command.param[BCODE_TEST_UUID_INDEX], UUID_LENGTH);
             if (uuid_cmp != 0) {
                 ERROR_MESSAGE("BCODE uuid mismatch");
@@ -468,7 +470,7 @@ int receive_BCODE() {
                 return -1;
             }
             BCODE_length = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
-            if ((BCODE_index + BCODE_length)) > MAX_BCODE_BUFFER_SIZE) {
+            if ((BCODE_index + BCODE_length) > MAX_BCODE_BUFFER_SIZE) {
                 ERROR_MESSAGE("BCODE buffer overflow");
                 BCODE_length = 0;
                 return -1;
@@ -492,6 +494,8 @@ int receive_BCODE() {
         BCODE_count = 0;
         BCODE_packets = 0;
         BCODE_index = 0;
+
+        Serial.println(String(BCODE_buffer));
     }
 
     return num;
@@ -524,7 +528,7 @@ int request_data(String msg) {
         parse_spark_request(msg);
         switch (spark_request.code) {
             case 0: // serial_number
-                get_config_info();
+                get_serial_number();
                 break;
             case 1: // all sensor data
                 get_all_sensor_data();
@@ -578,7 +582,9 @@ int run_command(String msg) {
         case 10: // cancel process
             return cancel_current_process();
         case 11: // receive BCODE string
-            return receive_BCODE()
+            return receive_BCODE();
+        case 12: // device ready
+            return (device_ready ? 1 : -1);
         default:
             return -1;
     }
@@ -643,6 +649,10 @@ int extract_int_from_string(char *str, int pos, int len) {
     return atoi(buf);
 }
 
+void write_assay_results_to_flash() {
+    return;
+}
+
 //
 //
 //  BCODE
@@ -654,12 +664,12 @@ int get_BCODE_param(int index, int *param) {
 
     i = index;
     while (i < MAX_BCODE_BUFFER_SIZE) {
-        if (BCODE_buffer[i] == '\n' || BCODE_buffer[i] == ',')
+        if (BCODE_buffer[i] == '\n' || BCODE_buffer[i] == ',') {
             break;
         }
     }
 
-    *param = extract_int_from_str(BCODE_buffer, index, i - index - 1);
+    *param = extract_int_from_string(BCODE_buffer, index, (i - index - 1));
     return (i + 1);
 }
 
@@ -672,7 +682,9 @@ int process_one_BCODE_command(int cmd, int index) {
         case 0: // Start Assay(integration time, gain)
             assay_start_time = Time.now();
             index = get_BCODE_param(index, &param1);
+            Serial.println(param1);
             index = get_BCODE_param(index, &param2);
+            Serial.println(param2);
             break;
         case 1: // Delay(milliseconds)
             //
@@ -718,22 +730,22 @@ int process_one_BCODE_command(int cmd, int index) {
             break;
         case 99: // Finish Assay
             STATUS("Storing assay results and resetting device");
-            write_assay_results_to_flash(assay_start_time);
+            write_assay_results_to_flash();
             reset_x_stage();
             break;
-    })
+    }
 }
 
 void process_BCODE() {
     int cmd, index;
-    char[64] param;
 
+    Serial.println("Processing BCODE");
     Spark.process();
     index = 0;
     cmd = extract_int_from_string(BCODE_buffer, index, BCODE_COMMAND_LENGTH);
     if (cmd != 0) {
         cancel_process = true;
-        ERROR_MESSAGE("First BCODE command must be Start Assay. Test cancelled.")
+        ERROR_MESSAGE("First BCODE command must be Start Assay. Test cancelled.");
         return;
     }
     else {
