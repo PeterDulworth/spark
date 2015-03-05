@@ -11,22 +11,17 @@
 //
 //
 
-void solenoid_in(bool check_limit_switch) {
+void solenoid_energize(int duration) {
     Spark.process();
 
     if (cancel_process) {
         return;
     }
 
-    if (!(check_limit_switch && limitSwitchOn())) {
-        analogWrite(pinSolenoid, brevitest.solenoid_surge_power);
-        delay(brevitest.solenoid_surge_period_ms);
-        analogWrite(pinSolenoid, brevitest.solenoid_sustain_power);
-    }
-}
-
-void solenoid_out() {
-    Spark.process();
+    analogWrite(pinSolenoid, brevitest.solenoid_surge_power);
+    delay(brevitest.solenoid_surge_period_ms);
+    analogWrite(pinSolenoid, brevitest.solenoid_sustain_power);
+    delay(duration - brevitest.solenoid_surge_period_ms);
     analogWrite(pinSolenoid, 0);
 }
 
@@ -87,48 +82,9 @@ bool limitSwitchOn() {
     return (digitalRead(A0) == LOW);
 }
 
-void reset_x_stage() {
+void reset_stage() {
     STATUS("Resetting device");
-    move_steps(brevitest.steps_to_reset, brevitest.step_delay_reset_us);
-}
-
-void raster_well(int number_of_rasters) {
-    delay(brevitest.solenoid_start_well_ms);
-    for (int i = 0; i < number_of_rasters; i += 1) {
-        if (cancel_process || limitSwitchOn()) {
-            return;
-        }
-        move_steps(brevitest.steps_per_raster, brevitest.step_delay_raster_us);
-        if (i < 1) {
-            delay(brevitest.solenoid_first_off_ms);
-            solenoid_in(true);
-            delay(brevitest.solenoid_first_on_ms);
-            solenoid_out();
-        }
-        else {
-            for (int k = 0; k < (brevitest.solenoid_cycles_per_raster - 1); k += 1) {
-                delay(brevitest.solenoid_off_ms);
-                solenoid_in(true);
-                delay(brevitest.solenoid_on_ms);
-                solenoid_out();
-            }
-        }
-    }
-    delay(brevitest.solenoid_finish_well_ms);
-}
-
-void move_to_next_well_and_raster(int path_length, int well_size, const char *well_name, bool first_well) {
-    STATUS("Moving to %s well", well_name);
-    if (first_well) {
-        move_steps(path_length, brevitest.step_delay_reset_us);
-    }
-    else {
-        move_steps(brevitest.steps_for_meniscus_transition, brevitest.step_delay_meniscus_us);
-        move_steps(path_length - brevitest.steps_for_meniscus_transition, brevitest.step_delay_transit_us);
-    }
-
-    STATUS("Rastering %s well", well_name);
-    CANCELLABLE(raster_well(well_size);)
+    move_steps(RESET_STAGE_STEPS, brevitest.step_delay_us);
 }
 
 //
@@ -142,6 +98,10 @@ void init_sensor(TCS34725 *sensor, int sdaPin, int sclPin) {
 
     it = brevitest.sensor_params >> 8;
     gain = brevitest.sensor_params & 0x00FF;
+    init_sensor_with_params(sensor, sdaPin, sclPin, it, gain);
+}
+
+void init_sensor_with_params(TCS34725 *sensor, int sdaPin, int sclPin, uint8_t it, uint8_t gain) {
     *sensor = TCS34725((tcs34725IntegrationTime_t) it, (tcs34725Gain_t) gain, sdaPin, sclPin);
 
     if (sensor->begin()) {
@@ -173,7 +133,7 @@ int get_flash_assay_record_index() {
     return count;
 }
 
-void write_sensor_readings_to_flash(int ref_time) {
+void write_sensor_readings_to_flash(int ref_time, int num_samples) {
     STATUS("Writing sensor data to flash memory");
 
     BrevitestHeader header;
@@ -184,15 +144,16 @@ void write_sensor_readings_to_flash(int ref_time) {
     // build header
     header.num = get_flash_assay_record_count();
     header.data_addr = get_flash_assay_data_address(index);
-    header.data_length = ASSAY_RECORD_DATA_LENGTH;
+    header.num_samples = num_samples;
     header.assay_start_time = ref_time;
+    memcpy(header.uuid, assay_uuid, UUID_LENGTH);
     header.param = brevitest;
 
     // write header
     flash->write(&header, header_addr, ASSAY_RECORD_HEADER_LENGTH);
 
     // write data
-    flash->write(assay_result, header.data_addr, ASSAY_RECORD_DATA_LENGTH);
+    flash->write(assay_result, header.data_addr, num_samples * ASSAY_SAMPLE_LENGTH);
 
     // update record count
     header.num++;
@@ -212,18 +173,16 @@ void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
     snprintf(&assay_result[index][0], ASSAY_SAMPLE_LENGTH + 1, "%c%2d%08x%5u%5u%5u%5u", sensorCode, reading_number, t, clear, red, green, blue);
 }
 
-void collect_sensor_readings(int assay_time) {
+void collect_sensor_readings(int number_of_samples, int delay_between_samples) {
     STATUS("Collecting sensor data");
-    for (int i = 0; i < ASSAY_NUMBER_OF_SAMPLES; i += 1) {
+    for (int i = 0; i < number_of_samples; i += 1) {
         if (cancel_process) {
             return;
         }
         read_sensor(&tcsAssay, 'A', i);
         read_sensor(&tcsControl, 'C', i);
-        delay(brevitest.sensor_ms_between_samples);
+        delay(delay_between_samples);
     }
-
-    write_sensor_readings_to_flash(assay_time);
 }
 
 //
@@ -501,6 +460,22 @@ int receive_BCODE() {
     return num;
 }
 
+int set_and_move_to_calibration_point() {
+    int calibration_steps;
+    uint8_t lsb, msb;
+
+    calibration_steps = extract_int_from_string(spark_command.param, 0, PARAM_CODE_LENGTH);
+
+    msb = (uint8_t) (calibration_steps >> 8);
+    lsb = (uint8_t) (calibration_steps & 0x0F);
+    EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS, msb);
+    EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS + 1, lsb);
+
+    move_to_calibration_point();
+
+    return 1;
+}
+
 //
 //
 //  EXPOSED FUNCTIONS
@@ -585,6 +560,8 @@ int run_command(String msg) {
             return receive_BCODE();
         case 12: // device ready
             return (device_ready ? 1 : -1);
+        case 13: // set and move to calibration point
+            return set_and_move_to_calibration_point();
         default:
             return -1;
     }
@@ -653,110 +630,177 @@ void write_assay_results_to_flash() {
     return;
 }
 
+void move_to_calibration_point() {
+    int calibration_steps;
+
+    calibration_steps = EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS);
+    calibration_steps <<= 8;
+    calibration_steps += EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS + 1);
+
+    CANCELLABLE(reset_stage();)
+    delay(500);
+    CANCELLABLE(move_steps(calibration_steps, brevitest.step_delay_us);)
+}
+
 //
 //
 //  BCODE
 //
 //
 
-int get_BCODE_param(int index, int *param) {
+int get_BCODE_token(int index, int *token) {
     int end, i, start;
 
-    i = index;
-    while (i < MAX_BCODE_BUFFER_SIZE) {
-        if (BCODE_buffer[i] == '\n' || BCODE_buffer[i] == ',') {
-            break;
-        }
+    if (cancel_process) {
+        return index;
     }
 
-    *param = extract_int_from_string(BCODE_buffer, index, (i - index - 1));
-    return (i + 1);
+    if (BCODE_buffer[i] == '\0') { // end of string
+        return index; // return end of string location
+    }
+
+    if (BCODE_buffer[index] == '\n') { // command has no parameter
+        return index + 1; // skip past parameter
+    }
+
+    // there is a parameter to extract
+    i = index;
+    while (i < MAX_BCODE_BUFFER_SIZE) {
+        if (BCODE_buffer[i] == '\0') {
+            *token = extract_int_from_string(BCODE_buffer, index, (i - index));
+            return i; // return end of string location
+        }
+        if ((BCODE_buffer[i] == '\n') || (BCODE_buffer[i] == ',')) {
+            *token = extract_int_from_string(BCODE_buffer, index, (i - index));
+            i++; // skip past parameter
+            return i;
+        }
+
+        i++;
+    }
+
+    return i;
 }
 
 int process_one_BCODE_command(int cmd, int index) {
-    int param1, param2;
+    int i, param1, param2, start_index;
 
-    index += 2; // increment past command code
+    if (cancel_process) {
+        return index;
+    }
+
+    Serial.print("Processing command: ");
+    Serial.println(cmd);
 
     switch(cmd) {
         case 0: // Start Assay(integration time, gain)
             assay_start_time = Time.now();
-            index = get_BCODE_param(index, &param1);
-            Serial.println(param1);
-            index = get_BCODE_param(index, &param2);
-            Serial.println(param2);
+            index = get_BCODE_token(index, &param1);
+            index = get_BCODE_token(index, &param2);
+
+            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, (uint8_t) param1, (uint8_t) param2);
+            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, (uint8_t) param1, (uint8_t) param2);
             break;
         case 1: // Delay(milliseconds)
-            //
+            index = get_BCODE_token(index, &param1);
+            delay(param1);
             break;
         case 2: // Move(number of steps, step delay)
-            //
+            index = get_BCODE_token(index, &param1);
+            index = get_BCODE_token(index, &param2);
+            move_steps(param1, param2);
             break;
         case 3: // Solenoid on(milliseconds)
-            //
+            index = get_BCODE_token(index, &param1);
+            solenoid_energize(param1);
             break;
         case 4: // Device LED on
-            //
+            Serial.println("Device LED not implemented");
             break;
         case 5: // Device LED off
-            //
+            Serial.println("Device LED not implemented");
             break;
         case 6: // Device LED blink(milliseconds)
-            //
+            index = get_BCODE_token(index, &param1);
+            Serial.println("Device LED not implemented");
             break;
         case 7: // Sensor LED on(power)
-            //
+            index = get_BCODE_token(index, &param1);
+            analogWrite(pinSensorLED, param1);
             break;
         case 8: // Sensor LED off
-            //
+            analogWrite(pinSensorLED, 0);
             break;
         case 9: // Read sensors(number of samples)
-            //
+            index = get_BCODE_token(index, &param1);
+            index = get_BCODE_token(index, &param2);
+            param1 = Math.max(0, Math.min(param1, ASSAY_NUMBER_OF_SAMPLES));
+            i = Time.now();
+            collect_sensor_readings(param1, param2);
+            write_sensor_readings_to_flash(i);
             break;
         case 10: // Read QR code
-            //
+            Serial.println("QR Code not implemented");
             break;
         case 11: // Disable sensor
-            //
+            tcsAssay.disable();
+            tcsControl.disable();
             break;
         case 12: // Repeat begin(number of iterations)
-            //
+            index = get_BCODE_token(index, &param1);
+
+            start_index = index;
+            for (i = 0; i < param1; i += 1) {
+                if (cancel_process) {
+                    break;
+                }
+                Serial.print("Repeat begin, iteration ");
+                Serial.println(i + 1);
+                index = process_BCODE(start_index);
+            }
             break;
         case 13: // Repeat end
-            //
+            Serial.println("Repeat end");
+            return -index;
             break;
         case 14: // Status(message length, message text)
-            //
+            index = get_BCODE_token(index, &param1);
+            param1++;
+            snprintf(spark_status, param1, &BCODE_buffer[index]);
+            index += param1;
             break;
         case 99: // Finish Assay
             STATUS("Storing assay results and resetting device");
             write_assay_results_to_flash();
-            reset_x_stage();
+            reset_stage();
             break;
     }
+
+    return index;
 }
 
-void process_BCODE() {
+int process_BCODE(int start_index) {
     int cmd, index;
 
     Serial.println("Processing BCODE");
     Spark.process();
-    index = 0;
-    cmd = extract_int_from_string(BCODE_buffer, index, BCODE_COMMAND_LENGTH);
-    if (cmd != 0) {
+    index = get_BCODE_token(start_index, &cmd);
+    if ((start_index == 0) && (cmd != 0)) { // first command
         cancel_process = true;
         ERROR_MESSAGE("First BCODE command must be Start Assay. Test cancelled.");
-        return;
+        return -1;
     }
     else {
         index = process_one_BCODE_command(cmd, index);
     }
 
-    while ((cmd != 99) && (index != -1) && !cancel_process) {
+    while ((cmd != 99) && (index > 0) && !cancel_process) {
         Spark.process();
-        cmd = extract_int_from_string(BCODE_buffer, index, BCODE_COMMAND_LENGTH);
+        index = get_BCODE_token(index, &cmd);
         index = process_one_BCODE_command(cmd, index);
     };
+
+    return (index > 0 ? index : -index);
 }
 
 //
@@ -766,6 +810,8 @@ void process_BCODE() {
 //
 
 void setup() {
+    int count;
+
     Spark.function("runcommand", run_command);
     Spark.function("requestdata", request_data);
     Spark.variable("register", spark_register, STRING);
@@ -777,7 +823,7 @@ void setup() {
     pinMode(pinStepperDir, OUTPUT);
     pinMode(pinStepperSleep, OUTPUT);
     pinMode(pinLimitSwitch, INPUT_PULLUP);
-    pinMode(pinLED, OUTPUT);
+    pinMode(pinSensorLED, OUTPUT);
     pinMode(pinAssaySDA, OUTPUT);
     pinMode(pinAssaySCL, OUTPUT);
     pinMode(pinControlSDA, OUTPUT);
@@ -799,11 +845,11 @@ void setup() {
 
     read_params();
 
-    int count;
     flash->read(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
     if (count == -1) { // brand new core
         count = 0;
         flash->write(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
+        write_default_params();
     }
 
     device_ready = false;
@@ -830,23 +876,22 @@ void loop(){
     if (init_device) {
         STATUS("Initializing device");
 
-        init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
-        init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
+        analogWrite(pinSolenoid, 0);
+        analogWrite(pinSensorLED, 0);
 
-        solenoid_out();
-        CANCELLABLE(reset_x_stage();)
-        STATUS("Device initialized and ready to run assay");
-        analogWrite(pinLED, 0);
+        move_to_calibration_point();
 
         device_ready = true;
         init_device = false;
+
+        STATUS("Device initialized and ready to run assay");
     }
 
     if (device_ready && run_assay) {
         device_ready = false;
         STATUS("Running assay...");
 
-        process_BCODE();
+        process_BCODE(0);
 
         STATUS("Assay complete.");
         run_assay = false;
@@ -857,15 +902,16 @@ void loop(){
         STATUS("Initializing sensors");
         init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
         init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
-        analogWrite(pinLED, brevitest.led_power);
+        analogWrite(pinSensorLED, brevitest.led_power);
 
         STATUS("Warming up sensor LEDs");
         delay(brevitest.led_warmup_ms);
 
         int t = Time.now();
-        CANCELLABLE(collect_sensor_readings(t);)
+        CANCELLABLE(collect_sensor_readings(brevitest.sensor_ms_between_samples);)
+        CANCELLABLE(write_sensor_readings_to_flash(t);)
 
-        analogWrite(pinLED, 0);
+        analogWrite(pinSensorLED, 0);
         tcsAssay.disable();
         tcsControl.disable();
         collect_sensor_data = false;
