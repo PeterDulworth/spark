@@ -5,55 +5,57 @@
 
 // GLOBAL VARIABLES AND DEFINES
 
+// general constants
 #define FIRMWARE_VERSION 0x08
+#define SERIAL_NUMBER_LENGTH 19
+#define UUID_LENGTH 32
+#define REQUEST_CODE_LENGTH 2
+#define COMMAND_CODE_LENGTH 2
+#define ERROR_MESSAGE(err) Serial.println(err)
+#define CANCELLABLE(x) if (!cancel_process) {x}
 
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 512
-#define FLASH_OVERFLOW_ADDRESS 719364
+#define FLASH_RECORD_CAPACITY 400
+#define FLASH_OVERFLOW_ADDRESS 819176
 
 // assay
-#define ASSAY_NUMBER_OF_RECORDS_ADDR 512
-#define ASSAY_RECORD_HEADER_LENGTH 256
-#define ASSAY_RECORD_HEADER_START_ADDR 516
-#define ASSAY_RECORD_HEADER_PARAM_OFFSET 48
-#define ASSAY_RECORD_DATA_LENGTH 680
-#define ASSAY_RECORD_START_ADDR 197124
+#define TEST_NUMBER_OF_RECORDS_ADDR 512
+#define TEST_RECORD_LENGTH 2048
+#define TEST_RECORD_START_ADDR 516
+#define TEST_RECORD_PARAM_OFFSET 38
+#define TEST_RECORD_BUFFER_OFFSET 106
+#define TEST_RECORD_BUFFER_SIZE 1942
 
-#define ASSAY_MAX_NUMBER_OF_SAMPLES 20
-#define ASSAY_SAMPLE_LENGTH 15
+#define SENSOR_MAX_NUMBER_OF_SAMPLES 20
+#define SENSOR_SAMPLE_LENGTH 15
 
 // eeprom addresses
 #define EEPROM_ADDR_DEFAULT_FLAG 0
 #define EEPROM_ADDR_SERIAL_NUMBER 1
 #define EEPROM_ADDR_CALIBRATION_STEPS 20
 
-// general constants
-#define SERIAL_NUMBER_LENGTH 19
-#define UUID_LENGTH 32
-#define REQUEST_CODE_LENGTH 2
-#define COMMAND_CODE_LENGTH 2
+// params
 #define PARAM_CODE_LENGTH 3
-#define MAX_NUMBER_OF_PARAMS 64
-#define NUMBER_OF_PARAMS 36
+#define MAX_NUMBER_OF_PARAMS 16
+#define NUMBER_OF_PARAMS 8
 #define PARAM_TOTAL_LENGTH (NUMBER_OF_PARAMS * 4)
 
 // status
 #define STATUS_LENGTH 623
 #define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
-#define ERROR_MESSAGE(err) Serial.println(err)
-#define CANCELLABLE(x) if (!cancel_process) {x}
 
 // device
 #define SPARK_REGISTER_SIZE 623
 #define SPARK_ARG_SIZE 63
+#define SPARK_RESET_STAGE_STEPS -60000
+
+// BCODE
 #define MAX_BCODE_BUFFER_SIZE 2000
 #define BCODE_PAYLOAD_INDEX 37
 #define BCODE_NUM_LENGTH 3
 #define BCODE_LEN_LENGTH 2
 #define BCODE_TEST_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
-#define BCODE_COMMAND_LENGTH 2
-#define RESET_STAGE_STEPS -60000
 
 // pin definitions
 int pinSolenoid = A1;
@@ -62,6 +64,7 @@ int pinStepperDir = D1;
 int pinStepperSleep = D0;
 int pinLimitSwitch = A0;
 int pinSensorLED = A4;
+int pinDeviceLED = A5;
 int pinAssaySDA = D3;
 int pinAssaySCL = D4;
 int pinControlSDA = D5;
@@ -71,8 +74,8 @@ int pinControlSCL = D6;
 bool device_ready;
 bool init_device;
 bool run_assay;
-char assay_uuid[UUID_LENGTH + 1];
-int assay_start_time;
+char test_uuid[UUID_LENGTH + 1];
+int test_start_time;
 bool collect_sensor_data;
 bool cancel_process;
 
@@ -85,7 +88,7 @@ int BCODE_index;
 char BCODE_test_uuid[UUID_LENGTH + 1];
 
 // sensors
-char assay_result[2 * ASSAY_MAX_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
+char test_result[2 * ASSAY_MAX_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
 
@@ -128,8 +131,7 @@ struct Param {
     // reserved
     int reserved[MAX_NUMBER_OF_PARAMS - NUMBER_OF_PARAMS];
 
-    Param() {
-        //  DEFAULT VALUES
+    Param() {  //  DEFAULT VALUES
         // stepper
         step_delay_us = 1200;  // microseconds
         stepper_wifi_ping_rate = 100;
@@ -146,29 +148,23 @@ struct Param {
     }
 } brevitest;
 
-struct BrevitestHeader {
-    int num;
-    int data_addr;
-    int num_samples;
-    int assay_start_time;
+struct BrevitestTestRecord{
+    uint16_t num;
+    uint16_t start_time;
     char uuid[32];
     Param param;
-    char reserved[80];
-    BrevitestHeader() {
-        num = 0;
-        data_addr = 0;
-        num_samples = 0;
-        data_length = 0;
-        assay_start_time = 0;
-    }
+    uint8_t BCODE_version;
+    uint8_t num_samples;
+    uint16_t BCODE_length;
+    char buffer[TEST_RECORD_BUFFER_SIZE];
 };
 
-struct BrevitestRecord {
+struct BrevitestSensorRecord {
     char sensor_code;
-    char reading_number[2];
+    uint8_t reading_number;
     int reading_time;
-    char clear[5];
-    char red[5];
-    char green[5];
-    char blue[5];
+    uint16_t clear;
+    uint16_t red;
+    uint16_t green;
+    uint16_t blue;
 };

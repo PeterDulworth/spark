@@ -5,11 +5,24 @@
 
 #include "main.h"
 
-//
-//
-//  SOLENOID
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        UTLITY                           //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int extract_int_from_string(char *str, int pos, int len) {
+    char buf[12];
+
+    strncpy(buf, &str[pos], len);
+    return atoi(buf);
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        SOLENOID                         //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 void solenoid_energize(int duration) {
     Spark.process();
@@ -25,11 +38,11 @@ void solenoid_energize(int duration) {
     analogWrite(pinSolenoid, 0);
 }
 
-//
-//
-//  STEPPER
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        STEPPER                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 void move_steps(long steps, int step_delay){
     //rotate a specific number of steps - negative for reverse movement
@@ -45,7 +58,7 @@ void move_steps(long steps, int step_delay){
         if (cancel_process) {
             break;
         }
-        if (dir == HIGH && limitSwitchOn()) {
+        if ((dir == HIGH) && (digitalRead(pinLimitSwitch) == LOW)) {
             break;
         }
 
@@ -72,26 +85,28 @@ void wake_stepper() {
     delay(brevitest.stepper_wake_delay_ms);
 }
 
-//
-//
-//  CONTROL
-//
-//
-
-bool limitSwitchOn() {
-    return (digitalRead(A0) == LOW);
-}
-
 void reset_stage() {
     STATUS("Resetting device");
     move_steps(RESET_STAGE_STEPS, brevitest.step_delay_us);
 }
 
-//
-//
-//  SENSORS
-//
-//
+void move_to_calibration_point() {
+    int calibration_steps;
+
+    calibration_steps = EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS);
+    calibration_steps <<= 8;
+    calibration_steps += EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS + 1);
+
+    CANCELLABLE(reset_stage();)
+    delay(500);
+    CANCELLABLE(move_steps(calibration_steps, brevitest.step_delay_us);)
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        SENSORS                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 void init_sensor(TCS34725 *sensor, int sdaPin, int sclPin) {
     uint8_t it, gain;
@@ -110,54 +125,6 @@ void init_sensor_with_params(TCS34725 *sensor, int sdaPin, int sclPin, uint8_t i
     else {
         ERROR_MESSAGE("Sensor not found");
     }
-}
-
-int get_flash_assay_header_address(int count) {
-    return ASSAY_RECORD_HEADER_START_ADDR + count * ASSAY_RECORD_HEADER_LENGTH;
-}
-
-int get_flash_assay_data_address(int count) {
-    return ASSAY_RECORD_START_ADDR + count * ASSAY_RECORD_DATA_LENGTH;
-}
-
-int get_flash_assay_record_count() {
-    int count;
-    flash->read(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
-    return count;
-}
-
-int get_flash_assay_record_index() {
-    int count;
-    flash->read(&count, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
-    count %= FLASH_RECORD_CAPACITY; // circular buffer
-    return count;
-}
-
-void write_sensor_readings_to_flash(int ref_time, int num_samples) {
-    STATUS("Writing sensor data to flash memory");
-
-    BrevitestHeader header;
-
-    int index = get_flash_assay_record_index();
-    int header_addr = get_flash_assay_header_address(index);
-
-    // build header
-    header.num = get_flash_assay_record_count();
-    header.data_addr = get_flash_assay_data_address(index);
-    header.num_samples = num_samples;
-    header.assay_start_time = ref_time;
-    memcpy(header.uuid, assay_uuid, UUID_LENGTH);
-    header.param = brevitest;
-
-    // write header
-    flash->write(&header, header_addr, ASSAY_RECORD_HEADER_LENGTH);
-
-    // write data
-    flash->write(assay_result, header.data_addr, num_samples * ASSAY_SAMPLE_LENGTH);
-
-    // update record count
-    header.num++;
-    flash->write(&header.num, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
 }
 
 void read_sensor(TCS34725 *sensor, char sensorCode, int reading_number) {
@@ -185,61 +152,83 @@ void collect_sensor_readings(int number_of_samples, int delay_between_samples) {
     }
 }
 
-//
-//
-//  REQUESTS
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                    FLASH AND PARAMS                     //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int get_flash_test_address(int count) {
+    return TEST_RECORD_START_ADDR + count * TEST_RECORD_LENGTH;
+}
+
+int get_flash_test_record_count() {
+    int count;
+    flash->read(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
+    count %= FLASH_RECORD_CAPACITY; // circular buffer
+    return count;
+}
+
+void write_test_record_to_flash(int ref_time, int num_samples) {
+    STATUS("Writing sensor data to flash memory");
+
+    int index, test_addr;
+    BrevitestTestRecord test;
+    BrevitestSensorRecord sensor;
+
+    // build test record
+    test.num = get_flash_test_record_count();
+    test.test_start_time = ref_time;
+    memcpy(test.uuid, test_uuid, UUID_LENGTH);
+    memcpy(&test.param, &brevitest, PARAM_TOTAL_LENGTH);
+    test.BCODE_version = 1;
+    test.num_samples = num_samples;
+    test.BCODE_length = BCODE_length;
+
+    // copy BCODE and sensor data
+    index = BCODE_length + 1;
+    memcpy(test.buffer, BCODE_buffer, index);
+    memcpy(&test.buffer[index], test_result, num_samples * ASSAY_SAMPLE_LENGTH);
+
+    // write test record
+    test_addr = get_flash_test_address(test.num);
+    index += num_samples * ASSAY_SAMPLE_LENGTH;
+    flash->write(&test, test_addr, index);
+
+    // update record count
+    header.num++;
+    flash->write(&header.num, ASSAY_NUMBER_OF_RECORDS_ADDR, 4);
+}
+
+void write_default_params() {
+    Param reset;
+    flash->write(&reset, 0, sizeof(reset));
+}
+
+void read_params() {
+    flash->read(&brevitest, 0, sizeof(brevitest));
+}
+
+void dump_params() {
+    int *ptr;
+
+    ptr = (int *) &brevitest;
+    for (int i = 0; i < NUMBER_OF_PARAMS; i += 1) {
+        Serial.println(*ptr++);
+    }
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        REQUESTS                         //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 void get_serial_number() {
     STATUS("Retrieving device serial number");
     spark_register[SERIAL_NUMBER_LENGTH] = '\0';
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         spark_register[i] = (char) EEPROM.read(EEPROM_ADDR_SERIAL_NUMBER + i);
-    }
-}
-
-void get_all_sensor_data() {
-    int bufSize, i;
-    int index = 0;
-
-    STATUS("Retrieving all sensor data from last assay");
-    for (i = 0; i < 2 * ASSAY_NUMBER_OF_SAMPLES; i += 1) {
-        if ((SPARK_REGISTER_SIZE - index) < (ASSAY_SAMPLE_LENGTH + 1)) {
-            STATUS("Buffer overrun - only partial results retrieved");
-            break;
-        }
-        memcpy(&spark_register[index], &assay_result[i][0], ASSAY_SAMPLE_LENGTH);
-        index += ASSAY_SAMPLE_LENGTH;
-    }
-    spark_register[index] = '\0';
-}
-
-void get_one_sensor_datum() {
-    STATUS("Retrieving one sensor data point from last assay");
-    int index = atoi(spark_request.param);
-    memcpy(spark_register, assay_result[index], ASSAY_SAMPLE_LENGTH);
-    spark_register[ASSAY_SAMPLE_LENGTH] = '\0';
-}
-
-void get_archived_assay_header() {
-    STATUS("Retrieving archived assay header");
-
-    BrevitestHeader header;
-    int count, header_addr, index, num;
-
-    count = get_flash_assay_record_count();
-    if (count > 0) {
-        num = atoi(spark_request.param);
-        if (num < count) {
-            header_addr = get_flash_assay_header_address(num);
-            flash->read(&header, header_addr, ASSAY_RECORD_HEADER_LENGTH);
-
-            sprintf(spark_register,"%4d%08x%2d%08x", header.num, header.data_addr, header.data_length, header.assay_start_time);
-            spark_register[22] = '\n';
-            header_addr += ASSAY_RECORD_HEADER_PARAM_OFFSET;
-            get_all_params(header_addr, 23);
-        }
     }
 }
 
@@ -253,7 +242,7 @@ void get_archived_assay_record() {
     if (count > 0) {
         num = atoi(spark_request.param);
         if (num < count) {
-            addr = get_flash_assay_data_address(num);
+            addr = get_flash_test_address(num);
             index = 0;
             for (i = 0; i < 2 * ASSAY_NUMBER_OF_SAMPLES; i += 1) {
                 if ((SPARK_REGISTER_SIZE - index) < (ASSAY_SAMPLE_LENGTH + 1)) {
@@ -279,8 +268,10 @@ void get_one_param() {
     Serial.println(String(spark_register));
 }
 
-void get_all_params(int offset, int index) {
+void get_all_params() {
     int value, len;
+    int offset = 0;
+    int index = 0;
 
     for (int i = 0; i < PARAM_TOTAL_LENGTH; i += 4) {
         flash->read(&value, i + offset, 4);
@@ -293,9 +284,70 @@ void get_all_params(int offset, int index) {
 
 //
 //
-//  COMMANDS
-//
-//
+
+void parse_spark_request(String msg) {
+    int len = msg.length();
+    msg.toCharArray(spark_request.arg, len + 1);
+
+    strncpy(spark_request.uuid, spark_request.arg, UUID_LENGTH);
+    Serial.println(String(spark_request.uuid));
+
+    spark_request.uuid[UUID_LENGTH] = '\0';
+    spark_request.code = extract_int_from_string(spark_request.arg, UUID_LENGTH, REQUEST_CODE_LENGTH);
+    len -= UUID_LENGTH + REQUEST_CODE_LENGTH;
+    strncpy(spark_request.param, &spark_request.arg[UUID_LENGTH + REQUEST_CODE_LENGTH], len);
+    spark_request.param[len] = '\0';
+
+    spark_request.pending = true;
+}
+
+int request_data(String msg) {
+    char new_uuid[UUID_LENGTH + 1];
+
+    if (spark_request.pending) {
+        msg.toCharArray(new_uuid, UUID_LENGTH + 1);
+        if (strcmp(new_uuid, spark_request.uuid) == 0) {
+            Serial.println("Request complete: ");
+            spark_register[0] = '\0';
+            spark_request.pending = false;
+            return 1;
+        }
+        else {
+            ERROR_MESSAGE("Register uuid mismatch");
+            return -1;
+        }
+    }
+    else {
+        Serial.print("Process request: ");
+        parse_spark_request(msg);
+        switch (spark_request.code) {
+            case 0: // serial_number
+                get_serial_number();
+                break;
+            case 1: // get archived test header
+                get_test_record_header();
+                break;
+            case 2: // get archived test data
+                get_test_record_data();
+                break;
+            case 3: // get params
+                get_all_params();
+                break;
+            case 4: // one parameter
+                get_one_param();
+                break;
+            default:
+                break;
+        }
+        return 1;
+    }
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                        COMMANDS                         //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 int write_serial_number() {
     STATUS("Writing serial number");
@@ -478,56 +530,15 @@ int set_and_move_to_calibration_point() {
 
 //
 //
-//  EXPOSED FUNCTIONS
-//
-//
 
-int request_data(String msg) {
-    char new_uuid[UUID_LENGTH + 1];
+void parse_spark_command(String msg) {
+    int len = msg.length();
+    msg.toCharArray(spark_command.arg, len + 1);
 
-    if (spark_request.pending) {
-        msg.toCharArray(new_uuid, UUID_LENGTH + 1);
-        if (strcmp(new_uuid, spark_request.uuid) == 0) {
-            Serial.println("Request complete: ");
-            spark_register[0] = '\0';
-            spark_request.pending = false;
-            return 1;
-        }
-        else {
-            ERROR_MESSAGE("Register uuid mismatch");
-            return -1;
-        }
-    }
-    else {
-        Serial.print("Process request: ");
-        parse_spark_request(msg);
-        switch (spark_request.code) {
-            case 0: // serial_number
-                get_serial_number();
-                break;
-            case 1: // all sensor data
-                get_all_sensor_data();
-                break;
-            case 2: // one sensor data point
-                get_one_sensor_datum();
-                break;
-            case 3: // archived sensor header
-                get_archived_assay_header();
-                break;
-            case 4: // archived sensor data
-                get_archived_assay_record();
-                break;
-            case 5: // all parameters
-                get_all_params(0, 0);
-                break;
-            case 6: // one parameter
-                get_one_param();
-                break;
-            default:
-                break;
-        }
-        return 1;
-    }
+    spark_command.code = extract_int_from_string(spark_command.arg, 0, COMMAND_CODE_LENGTH);
+    len -= COMMAND_CODE_LENGTH;
+    strncpy(spark_command.param, &spark_command.arg[COMMAND_CODE_LENGTH], len);
+    spark_command.param[len] = '\0';
 }
 
 int run_command(String msg) {
@@ -568,85 +579,11 @@ int run_command(String msg) {
     return -1;
 }
 
-
-//
-//
-//  UTILITY
-//
-//
-
-void parse_spark_request(String msg) {
-    int len = msg.length();
-    msg.toCharArray(spark_request.arg, len + 1);
-
-    strncpy(spark_request.uuid, spark_request.arg, UUID_LENGTH);
-    Serial.println(String(spark_request.uuid));
-
-    spark_request.uuid[UUID_LENGTH] = '\0';
-    spark_request.code = extract_int_from_string(spark_request.arg, UUID_LENGTH, REQUEST_CODE_LENGTH);
-    len -= UUID_LENGTH + REQUEST_CODE_LENGTH;
-    strncpy(spark_request.param, &spark_request.arg[UUID_LENGTH + REQUEST_CODE_LENGTH], len);
-    spark_request.param[len] = '\0';
-
-    spark_request.pending = true;
-}
-
-void parse_spark_command(String msg) {
-    int len = msg.length();
-    msg.toCharArray(spark_command.arg, len + 1);
-
-    spark_command.code = extract_int_from_string(spark_command.arg, 0, COMMAND_CODE_LENGTH);
-    len -= COMMAND_CODE_LENGTH;
-    strncpy(spark_command.param, &spark_command.arg[COMMAND_CODE_LENGTH], len);
-    spark_command.param[len] = '\0';
-}
-
-void write_default_params() {
-    Param reset;
-    flash->write(&reset, 0, sizeof(reset));
-}
-
-void read_params() {
-    flash->read(&brevitest, 0, sizeof(brevitest));
-}
-
-void dump_params() {
-    int *ptr;
-
-    ptr = (int *) &brevitest;
-    for (int i = 0; i < NUMBER_OF_PARAMS; i += 1) {
-        Serial.println(*ptr++);
-    }
-}
-
-int extract_int_from_string(char *str, int pos, int len) {
-    char buf[12];
-
-    strncpy(buf, &str[pos], len);
-    return atoi(buf);
-}
-
-void write_assay_results_to_flash() {
-    return;
-}
-
-void move_to_calibration_point() {
-    int calibration_steps;
-
-    calibration_steps = EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS);
-    calibration_steps <<= 8;
-    calibration_steps += EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS + 1);
-
-    CANCELLABLE(reset_stage();)
-    delay(500);
-    CANCELLABLE(move_steps(calibration_steps, brevitest.step_delay_us);)
-}
-
-//
-//
-//  BCODE
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                          BCODE                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 int get_BCODE_token(int index, int *token) {
     int end, i, start;
@@ -715,14 +652,16 @@ int process_one_BCODE_command(int cmd, int index) {
             solenoid_energize(param1);
             break;
         case 4: // Device LED on
-            Serial.println("Device LED not implemented");
+            analogWrite(pinDeviceLED, 255);
             break;
         case 5: // Device LED off
-            Serial.println("Device LED not implemented");
+            analogWrite(pinDeviceLED, 0);
             break;
         case 6: // Device LED blink(milliseconds)
             index = get_BCODE_token(index, &param1);
-            Serial.println("Device LED not implemented");
+            analogWrite(pinDeviceLED, 255);
+            delay(param1);
+            analogWrite(pinDeviceLED, 0);
             break;
         case 7: // Sensor LED on(power)
             index = get_BCODE_token(index, &param1);
@@ -737,7 +676,7 @@ int process_one_BCODE_command(int cmd, int index) {
             param1 = Math.max(0, Math.min(param1, ASSAY_NUMBER_OF_SAMPLES));
             i = Time.now();
             collect_sensor_readings(param1, param2);
-            write_sensor_readings_to_flash(i);
+            write_test_record_to_flash(i, 2 * param1);
             break;
         case 10: // Read QR code
             Serial.println("QR Code not implemented");
@@ -803,11 +742,11 @@ int process_BCODE(int start_index) {
     return (index > 0 ? index : -index);
 }
 
-//
-//
-//  SETUP
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                          SETUP                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
 
 void setup() {
     int count;
@@ -816,7 +755,7 @@ void setup() {
     Spark.function("requestdata", request_data);
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", spark_status, STRING);
-    Spark.variable("assayrunning", assay_uuid, STRING);
+    Spark.variable("testrunning", test_uuid, STRING);
 
     pinMode(pinSolenoid, OUTPUT);
     pinMode(pinStepperStep, OUTPUT);
@@ -866,56 +805,68 @@ void setup() {
     STATUS("Setup complete");
 }
 
-//
-//
-//  LOOP
-//
-//
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                           LOOP                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+void do_initialize_device() {
+    STATUS("Initializing device");
+
+    analogWrite(pinSolenoid, 0);
+    analogWrite(pinSensorLED, 0);
+
+    move_to_calibration_point();
+
+    device_ready = true;
+    init_device = false;
+
+    STATUS("Device initialized and ready to run assay");
+}
+
+void do_run_test() {
+    device_ready = false;
+    STATUS("Running assay...");
+
+    process_BCODE(0);
+
+    STATUS("Assay complete.");
+    run_assay = false;
+    assay_uuid[0] = '\0';
+}
+
+void do_sensor_data_collection() {
+    STATUS("Initializing sensors");
+    init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
+    init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
+    analogWrite(pinSensorLED, brevitest.led_power);
+
+    STATUS("Warming up sensor LEDs");
+    delay(brevitest.led_warmup_ms);
+
+    int t = Time.now();
+    CANCELLABLE(collect_sensor_readings(SENSOR_MAX_NUMBER_OF_SAMPLES, brevitest.sensor_ms_between_samples);)
+    CANCELLABLE(write_test_record_to_flash(t, SENSOR_MAX_NUMBER_OF_SAMPLES);)
+
+    analogWrite(pinSensorLED, 0);
+    tcsAssay.disable();
+    tcsControl.disable();
+    collect_sensor_data = false;
+    STATUS("Sensor data collection complete");
+}
 
 void loop(){
     if (init_device) {
-        STATUS("Initializing device");
-
-        analogWrite(pinSolenoid, 0);
-        analogWrite(pinSensorLED, 0);
-
-        move_to_calibration_point();
-
-        device_ready = true;
-        init_device = false;
-
-        STATUS("Device initialized and ready to run assay");
+        do_initialize_device();
     }
 
     if (device_ready && run_assay) {
-        device_ready = false;
-        STATUS("Running assay...");
-
-        process_BCODE(0);
-
-        STATUS("Assay complete.");
-        run_assay = false;
-        assay_uuid[0] = '\0';
+        do_run_test();
     }
 
     if (collect_sensor_data) {
-        STATUS("Initializing sensors");
-        init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
-        init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
-        analogWrite(pinSensorLED, brevitest.led_power);
-
-        STATUS("Warming up sensor LEDs");
-        delay(brevitest.led_warmup_ms);
-
-        int t = Time.now();
-        CANCELLABLE(collect_sensor_readings(brevitest.sensor_ms_between_samples);)
-        CANCELLABLE(write_sensor_readings_to_flash(t);)
-
-        analogWrite(pinSensorLED, 0);
-        tcsAssay.disable();
-        tcsControl.disable();
-        collect_sensor_data = false;
-        STATUS("Sensor data collection complete");
+        do_sensor_data_collection();
     }
 
     if (cancel_process) {
