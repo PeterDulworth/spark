@@ -9,31 +9,38 @@
 #define FIRMWARE_VERSION 0x08
 #define SERIAL_NUMBER_LENGTH 19
 #define UUID_LENGTH 32
-#define REQUEST_CODE_LENGTH 2
 #define COMMAND_CODE_LENGTH 2
 #define ERROR_MESSAGE(err) Serial.println(err)
 #define CANCELLABLE(x) if (!cancel_process) {x}
 
+// request
+#define REQUEST_INDEX_INDEX UUID_LENGTH
+#define REQUEST_INDEX_LENGTH 6
+#define REQUEST_CODE_INDEX (REQUEST_INDEX_INDEX + REQUEST_INDEX_LENGTH)
+#define REQUEST_CODE_LENGTH 2
+#define REQUEST_PARAM_INDEX (REQUEST_CODE_INDEX + REQUEST_CODE_LENGTH)
+
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 400
-#define FLASH_OVERFLOW_ADDRESS 819176
+#define FLASH_RECORD_CAPACITY 600
+#define FLASH_OVERFLOW_ADDRESS 450516
 
 // test
 #define TEST_NUMBER_OF_RECORDS_ADDR 512
-#define TEST_RECORD_LENGTH 2048
+#define TEST_RECORD_LENGTH 900
 #define TEST_RECORD_START_ADDR 516
 #define TEST_RECORD_UUID_OFFSET 6
 #define TEST_RECORD_PARAM_OFFSET 38
-#define TEST_RECORD_BUFFER_OFFSET 106
-#define TEST_RECORD_NUM_SAMPLES_OFFSET 103
-#define TEST_RECORD_BUFFER_SIZE 1942
-#define TEST_RECORD_INDEX_LENGTH 7
-#define TEST_RECORD_STRING_LENGTH 5000
+#define TEST_RECORD_BCODE_OFFSET 106
+#define TEST_RECORD_SENSOR_OFFSET 600
+#define TEST_RECORD_STRING_LENGTH 1300
+#define TEST_RECORD_NUM_LENGTH 3
+#define TEST_RECORD_INDEX_LENGTH 6
 
 // sensor
-#define SENSOR_MAX_NUMBER_OF_SAMPLES 20
+#define SENSOR_COLLECT_SAMPLES 10
 #define SENSOR_SAMPLE_LENGTH 15
+#define SENSOR_SAMPLE_CAPACITY 20
 
 // eeprom addresses
 #define EEPROM_ADDR_DEFAULT_FLAG 0
@@ -42,25 +49,25 @@ FlashDevice* flash;
 
 // params
 #define PARAM_CODE_LENGTH 3
-#define MAX_NUMBER_OF_PARAMS 16
-#define NUMBER_OF_PARAMS 8
-#define PARAM_TOTAL_LENGTH (NUMBER_OF_PARAMS * 4)
+#define PARAM_CAPACITY 16
+#define PARAM_COUNT 10
+#define PARAM_TOTAL_LENGTH (PARAM_COUNT * 4)
 
 // status
-#define STATUS_LENGTH 623
+#define STATUS_LENGTH 622
 #define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
 
 // device
-#define SPARK_REGISTER_SIZE 623
+#define SPARK_REGISTER_SIZE 622
 #define SPARK_ARG_SIZE 63
 #define SPARK_RESET_STAGE_STEPS -60000
 
 // BCODE
-#define MAX_BCODE_BUFFER_SIZE 2000
+#define BCODE_CAPACITY 494
 #define BCODE_PAYLOAD_INDEX 37
 #define BCODE_NUM_LENGTH 3
 #define BCODE_LEN_LENGTH 2
-#define BCODE_TEST_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
+#define BCODE_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
 
 // pin definitions
 int pinSolenoid = A1;
@@ -83,18 +90,19 @@ bool collect_sensor_data;
 bool cancel_process;
 
 // BCODE globals
-char BCODE_buffer[MAX_BCODE_BUFFER_SIZE];
 int BCODE_length;
 int BCODE_count;
 int BCODE_packets;
 int BCODE_index;
-char BCODE_test_uuid[UUID_LENGTH + 1];
+char BCODE_uuid[UUID_LENGTH + 1];
 
 // test
-char test_result[2 * ASSAY_MAX_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
 char test_uuid[UUID_LENGTH + 1];
 int test_start_time;
+int test_num;
 char test_string[TEST_RECORD_STRING_LENGTH];
+int test_string_length;
+char test_sensor_sample_count;
 
 // sensors
 TCS34725 tcsAssay;
@@ -111,13 +119,13 @@ struct Command {
 } spark_command;
 
 struct Request {
-    bool pending;
     char arg[SPARK_ARG_SIZE + 1];
     char uuid[UUID_LENGTH + 1];
     int code;
-    char param[SPARK_ARG_SIZE - UUID_LENGTH - REQUEST_CODE_LENGTH + 1];
+    int index;
+    char param[SPARK_ARG_SIZE - UUID_LENGTH - REQUEST_CODE_LENGTH - REQUEST_INDEX_LENGTH + 1];
     Request() {
-        pending = false;
+        uuid[0] = '\0';
     }
 } spark_request;
 
@@ -135,9 +143,8 @@ struct Param {
     // sensors
     int sensor_params;
     int sensor_ms_between_samples;
-
-    // reserved
-    int reserved[MAX_NUMBER_OF_PARAMS - NUMBER_OF_PARAMS];
+    int sensor_led_power;
+    int sensor_led_warmup_ms;
 
     Param() {  //  DEFAULT VALUES
         // stepper
@@ -153,26 +160,29 @@ struct Param {
         // sensors
         sensor_params = (TCS34725_INTEGRATIONTIME_50MS << 8) + TCS34725_GAIN_4X;
         sensor_ms_between_samples = 1000;
+        sensor_led_power = 20;
+        sensor_led_warmup_ms = 10000;
     }
 } brevitest;
 
-struct BrevitestTestRecord{
-    uint16_t num;
-    uint16_t start_time;
-    char uuid[32];
-    Param param;
-    uint8_t BCODE_version;
-    uint8_t num_samples;
-    uint16_t BCODE_length;
-    char buffer[TEST_RECORD_BUFFER_SIZE];
-};
-
 struct BrevitestSensorRecord {
     char sensor_code;
-    uint8_t reading_number;
+    uint8_t sample_number;
     int reading_time;
     uint16_t clear;
     uint16_t red;
     uint16_t green;
     uint16_t blue;
 };
+
+struct BrevitestTestRecord{
+    uint16_t num;
+    int start_time;
+    char uuid[UUID_LENGTH + 1];
+    uint8_t num_samples;  // 2 readings per sample (assay, control)
+    uint8_t BCODE_version;
+    uint16_t BCODE_length;
+    Param param;
+    char BCODE[BCODE_CAPACITY];
+    BrevitestSensorRecord sensor_reading[2 * SENSOR_SAMPLE_CAPACITY];
+} test_record;
