@@ -19,14 +19,19 @@ FlashDevice* flash;
 #define FLASH_RECORD_CAPACITY 400
 #define FLASH_OVERFLOW_ADDRESS 819176
 
-// assay
+// test
 #define TEST_NUMBER_OF_RECORDS_ADDR 512
 #define TEST_RECORD_LENGTH 2048
 #define TEST_RECORD_START_ADDR 516
+#define TEST_RECORD_UUID_OFFSET 6
 #define TEST_RECORD_PARAM_OFFSET 38
 #define TEST_RECORD_BUFFER_OFFSET 106
+#define TEST_RECORD_NUM_SAMPLES_OFFSET 103
 #define TEST_RECORD_BUFFER_SIZE 1942
+#define TEST_RECORD_INDEX_LENGTH 7
+#define TEST_RECORD_STRING_LENGTH 5000
 
+// sensor
 #define SENSOR_MAX_NUMBER_OF_SAMPLES 20
 #define SENSOR_SAMPLE_LENGTH 15
 
@@ -74,8 +79,6 @@ int pinControlSCL = D6;
 bool device_ready;
 bool init_device;
 bool run_assay;
-char test_uuid[UUID_LENGTH + 1];
-int test_start_time;
 bool collect_sensor_data;
 bool cancel_process;
 
@@ -87,8 +90,13 @@ int BCODE_packets;
 int BCODE_index;
 char BCODE_test_uuid[UUID_LENGTH + 1];
 
-// sensors
+// test
 char test_result[2 * ASSAY_MAX_NUMBER_OF_SAMPLES][ASSAY_SAMPLE_LENGTH];
+char test_uuid[UUID_LENGTH + 1];
+int test_start_time;
+char test_string[TEST_RECORD_STRING_LENGTH];
+
+// sensors
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
 

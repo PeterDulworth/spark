@@ -158,8 +158,25 @@ void collect_sensor_readings(int number_of_samples, int delay_between_samples) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int get_flash_test_address(int count) {
-    return TEST_RECORD_START_ADDR + count * TEST_RECORD_LENGTH;
+int get_flash_test_address(int num) {
+    return TEST_RECORD_START_ADDR + num * TEST_RECORD_LENGTH;
+}
+
+int get_flash_test_address_by_uuid(char *uuid) {
+    int i;
+    char flash_uuid[UUID_LENGTH];
+    int count = get_flash_test_record_count();
+    int index = TEST_RECORD_START_ADDR + TEST_RECORD_UUID_OFFSET;
+
+    for (i = 0; i < count; i += 1) {
+        flash->read(flash_uuid, index);
+        if (strncmp(uuid, flash_uuid, UUID_LENGTH) == 0) {
+            return index - TEST_RECORD_UUID_OFFSET;
+        }
+        index += TEST_RECORD_LENGTH;
+    }
+
+    return -1;
 }
 
 int get_flash_test_record_count() {
@@ -224,38 +241,52 @@ void dump_params() {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-void get_serial_number() {
+int get_serial_number() {
     STATUS("Retrieving device serial number");
     spark_register[SERIAL_NUMBER_LENGTH] = '\0';
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         spark_register[i] = (char) EEPROM.read(EEPROM_ADDR_SERIAL_NUMBER + i);
     }
+    return 1;
 }
 
-void get_archived_assay_record() {
-    STATUS("Retrieving archived assay record");
+int get_test_record() {
+    // spark_request.param is index, test.uuid
+    STATUS("Retrieving test record");
 
-    BrevitestHeader record;
-    int count, addr, i, index, num;
+    BrevitestTestRecord record;
+    int addr, count, i, index, len, pos;
+    char *uuid_addr;
 
     count = get_flash_assay_record_count();
-    if (count > 0) {
-        num = atoi(spark_request.param);
-        if (num < count) {
-            addr = get_flash_test_address(num);
-            index = 0;
-            for (i = 0; i < 2 * ASSAY_NUMBER_OF_SAMPLES; i += 1) {
-                if ((SPARK_REGISTER_SIZE - index) < (ASSAY_SAMPLE_LENGTH + 1)) {
-                    STATUS("Buffer overrun - only partial archive data retrieved");
-                    break;
-                }
-                flash->read(&spark_register[index], addr, ASSAY_SAMPLE_LENGTH);
-                addr += ASSAY_SAMPLE_LENGTH;
-                index += ASSAY_SAMPLE_LENGTH;
-            }
-            spark_register[index] = '\0';
-        }
+    if (count <= 0) { // no records
+      return -1;
     }
+
+    uuid_addr = &spark_request.param[TEST_RECORD_INDEX_LENGTH];
+    if (strncmp(uuid, , UUID_LENGTH)) {
+
+    }
+
+
+    addr = get_flash_test_address_by_uuid(uuid_addr);
+    if (addr == -1) {
+      return -1;
+    }
+
+    index = extract_int_from_string(spark_request.param, 0, TEST_RECORD_INDEX_LENGTH);
+    if (index >= (FLASH_OVERFLOW_ADDRESS - TEST_RECORD_LENGTH)) { // overflow
+      return -1;
+    }
+
+    len = Math.min(TEST_RECORD_LENGTH - index, SPARK_REGISTER_SIZE);
+    flash->read(&record, addr, TEST_RECORD_LENGTH);
+
+
+    spark_register[len] = '\0';
+    index += len;
+
+    return index;
 }
 
 void get_one_param() {
@@ -266,6 +297,8 @@ void get_one_param() {
     flash->read(&value, num, 4);
     sprintf(spark_register, "%d", value);
     Serial.println(String(spark_register));
+
+    return 1;
 }
 
 void get_all_params() {
@@ -280,6 +313,8 @@ void get_all_params() {
     }
     spark_register[--index] = '\0';
     Serial.println(String(spark_register));
+
+    return 1;
 }
 
 //
@@ -322,24 +357,15 @@ int request_data(String msg) {
         parse_spark_request(msg);
         switch (spark_request.code) {
             case 0: // serial_number
-                get_serial_number();
-                break;
+                return get_serial_number();
             case 1: // get archived test header
-                get_test_record_header();
-                break;
-            case 2: // get archived test data
-                get_test_record_data();
-                break;
-            case 3: // get params
-                get_all_params();
-                break;
-            case 4: // one parameter
-                get_one_param();
-                break;
-            default:
-                break;
+                return get_test_record();
+            case 2: // get params
+                return get_all_params();
+            case 3: // one parameter
+                return get_one_param();
         }
-        return 1;
+        return -1;
     }
 }
 
