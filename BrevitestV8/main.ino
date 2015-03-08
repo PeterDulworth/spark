@@ -148,7 +148,6 @@ void read_sensor(TCS34725 *sensor, char sensor_code, int sample_number, int numb
 }
 
 void sample_sensors(int number_of_samples, int delay_between_samples) {
-    STATUS("Collecting sensor data");
     for (int i = 0; i < number_of_samples; i += 1) {
         if (cancel_process) {
             return;
@@ -157,6 +156,9 @@ void sample_sensors(int number_of_samples, int delay_between_samples) {
         read_sensor(&tcsControl, 'C', i, number_of_samples);
         delay(delay_between_samples);
         test_sensor_sample_count++;
+        if (test_sensor_sample_count >= SENSOR_SAMPLE_CAPACITY) {
+            test_sensor_sample_count = SENSOR_SAMPLE_CAPACITY;
+        }
     }
 }
 
@@ -168,8 +170,8 @@ void sample_sensors(int number_of_samples, int delay_between_samples) {
 
 int get_flash_test_address(int num) {
     int count = get_flash_test_record_count();
-    if (count <= 0) { // no records
-      return -1;
+    if (count == 0) { // no records
+      return TEST_RECORD_START_ADDR;
     }
 
     if (num < count) {
@@ -187,18 +189,18 @@ int get_flash_test_address_by_uuid(char *uuid) {
     if (count <= 0) { // no records
       return -1;
     }
-
     index = TEST_RECORD_START_ADDR + TEST_RECORD_UUID_OFFSET;
     for (i = 0; i < count; i += 1) {
         flash->read(test_uuid, index, UUID_LENGTH);
+        test_uuid[UUID_LENGTH] = '\0';
+
         if (strncmp(uuid, test_uuid, UUID_LENGTH) == 0) {
-            test_uuid[0] = '\0';
-            return (index - TEST_RECORD_UUID_OFFSET);
+            index -= TEST_RECORD_UUID_OFFSET;
+            return index;
         }
         index += TEST_RECORD_LENGTH;
     }
 
-    test_uuid[0] = '\0';
     return -1;
 }
 
@@ -214,7 +216,7 @@ void write_test_record_to_flash() {
 
     // build test record
     test_record.num = get_flash_test_record_count();
-    memcpy(test_record.uuid, test_uuid, UUID_LENGTH);
+    strncpy(test_record.uuid, test_uuid, UUID_LENGTH);
     test_record.uuid[UUID_LENGTH] = '\0';
     memcpy(&test_record.param, &brevitest, PARAM_TOTAL_LENGTH);
     test_record.BCODE_version = 1;
@@ -258,7 +260,6 @@ void dump_params() {
 /////////////////////////////////////////////////////////////
 
 int get_serial_number() {
-    STATUS("Retrieving device serial number");
     spark_register[SERIAL_NUMBER_LENGTH] = '\0';
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         spark_register[i] = (char) EEPROM.read(EEPROM_ADDR_SERIAL_NUMBER + i);
@@ -266,43 +267,47 @@ int get_serial_number() {
     return 0;
 }
 
-void generate_test_string(int addr) {
+int process_test_record(int addr) {
     BrevitestSensorRecord *reading;
-    int i, len;
+    int finish, i, len, start;
+    int packet_max, num_readings, num_readings_per_packet, packet_num;
 
     flash->read(&test_record, addr, TEST_RECORD_LENGTH);
+    switch (spark_request.index / 10) {
 
-    len = snprintf(test_string, TEST_RECORD_STRING_LENGTH, \
-            "%3d\t%11d\t%11d\t%32s\t%3d\t%3d\t%4d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n%s\n", \
-            test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.num_samples, test_record.BCODE_version, test_record.BCODE_length, \
-            test_record.param.step_delay_us, test_record.param.stepper_wifi_ping_rate, test_record.param.stepper_wake_delay_ms, \
-            test_record.param.solenoid_surge_power, test_record.param.solenoid_surge_period_ms, test_record.param.solenoid_sustain_power, \
-            test_record.param.sensor_params, test_record.param.sensor_ms_between_samples, test_record.param.sensor_led_power, \
-            test_record.param.sensor_led_warmup_ms, test_record.BCODE);
-
-    for (i = 0; i < 2 * test_record.num_samples; i += 1) {
-        reading = &test_record.sensor_reading[i];
-        len += snprintf(&test_string[len], TEST_RECORD_STRING_LENGTH - len, \
-                "%c\t%2d\t%11d\t%5d\t%5d\t%5d\t%5d\n", \
-                reading->sensor_code, reading->sample_number, reading->reading_time, \
-                reading->clear, reading->red, reading->green, reading->blue);
+        case 0:
+            len = snprintf(spark_register, SPARK_REGISTER_SIZE, \
+                "%3d\t%11d\t%11d\t%32s\t%3d\t%3d\t%4d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n", \
+                test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.num_samples, test_record.BCODE_version, test_record.BCODE_length, \
+                test_record.param.step_delay_us, test_record.param.stepper_wifi_ping_rate, test_record.param.stepper_wake_delay_ms, \
+                test_record.param.solenoid_surge_power, test_record.param.solenoid_surge_period_ms, test_record.param.solenoid_sustain_power, \
+                test_record.param.sensor_params, test_record.param.sensor_ms_between_samples, test_record.param.sensor_led_power, \
+                test_record.param.sensor_led_warmup_ms);
+            spark_request.index = 10;
+            break;
+        case 1:
+            len = snprintf(spark_register, SPARK_REGISTER_SIZE, "%s\n", test_record.BCODE);
+            spark_request.index = 100;
+            break;
+        case 10:
+            packet_num = spark_request.index % 100;
+            num_readings = (2 * test_record.num_samples);
+            num_readings_per_packet = SPARK_REGISTER_SIZE / TEST_RECORD_READING_STRING_LENGTH;
+            packet_max = num_readings / num_readings_per_packet;
+            packet_max -= ((num_readings % num_readings_per_packet) == 0 ? 1 : 0);
+            start = num_readings_per_packet * packet_num;
+            finish = (packet_num == packet_max ? num_readings : start + num_readings_per_packet);
+            len = 0;
+            for (i = start; i < finish; i += 1) {
+                reading = &test_record.sensor_reading[i];
+                len += snprintf(&spark_register[len], SPARK_REGISTER_SIZE - len, \
+                    "%c\t%2d\t%11d\t%5d\t%5d\t%5d\t%5d\n", \
+                    reading->sensor_code, reading->sample_number, reading->reading_time, \
+                    reading->clear, reading->red, reading->green, reading->blue);
+            }
+            spark_request.index = (packet_num < packet_max ? 101 + packet_num : 0);
     }
-    test_string[--len] = '\0';
-    test_string_length = len;
-}
-
-int process_test_string() {
-    int len;
-
-    len = test_string_length - spark_request.index;
-    len = (len < SPARK_REGISTER_SIZE ? len : SPARK_REGISTER_SIZE);
-    memcpy(spark_register, &test_string[spark_request.index], len);
     spark_register[len] = '\0';
-    spark_request.index += len;
-    if (spark_request.index >= test_string_length) {
-        spark_request.index = 0;
-    }
-
     return spark_request.index;
 }
 
@@ -310,52 +315,42 @@ int get_test_record() {
     // spark_request.param is num
     int addr;
 
-    STATUS("Retrieving test record");
-
-    Serial.println(spark_request.index);
     if (spark_request.index == 0) {  // initial request
         test_num = atoi(spark_request.param);
-        Serial.println(test_num);
-        addr = get_flash_test_address(test_num);
-        Serial.println(addr);
-        if (addr == -1) {
-          return -2;
-        }
-
-        generate_test_string(addr);
     }
     else {  // continuation request
-        Serial.println(spark_request.param);
         if (atoi(spark_request.param) != test_num) {
             return -3;
         }
     }
 
-    return process_test_string();
+    addr = get_flash_test_address(test_num);
+    if (addr == -1) {
+      return -2;
+    }
+
+    return process_test_record(addr);
 }
 
 int get_test_record_by_uuid() {
     // spark_request.param is num
     int addr;
 
-    STATUS("Retrieving test record by uuid");
-
     if (spark_request.index == 0) {  // initial request
-        addr = get_flash_test_address_by_uuid(spark_request.uuid);
-        if (addr == -1) {
-          return -1;
-        }
-
-        memcpy(test_uuid, spark_request.uuid, UUID_LENGTH);
-        generate_test_string(addr);
+        strncpy(test_uuid, spark_request.uuid, UUID_LENGTH);
     }
     else {  // continuation request
         if (strncmp(spark_request.uuid, test_uuid, UUID_LENGTH) != 0) {
-            return -1;
+            return -3;
         }
     }
 
-    return process_test_string();
+    addr = get_flash_test_address_by_uuid(spark_request.uuid);
+    if (addr == -1) {
+      return -2;
+    }
+
+    return process_test_record(addr);
 }
 
 int get_one_param() {
@@ -393,7 +388,6 @@ int parse_spark_request(String msg) {
     msg.toCharArray(spark_request.arg, len + 1);
 
     spark_request.index = extract_int_from_string(spark_request.arg, REQUEST_INDEX_INDEX, REQUEST_INDEX_LENGTH);
-
     if (spark_request.index == 0) { // first request
         strncpy(spark_request.uuid, spark_request.arg, UUID_LENGTH);
         spark_request.uuid[UUID_LENGTH] = '\0';
@@ -417,6 +411,7 @@ int parse_spark_request(String msg) {
 }
 
 int request_data(String msg) {
+    Serial.println("Requesting data");
     if (parse_spark_request(msg) > 0) {
         switch (spark_request.code) {
             case 0: // serial_number
@@ -442,7 +437,6 @@ int request_data(String msg) {
 /////////////////////////////////////////////////////////////
 
 int write_serial_number() {
-    STATUS("Writing serial number");
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, spark_command.param[i]);
     }
@@ -472,7 +466,7 @@ int run_brevitest() {
         return -1;
     }
 
-    memcpy(test_uuid, &spark_command.param, UUID_LENGTH);
+    strncpy(test_uuid, spark_command.param, UUID_LENGTH);
     test_uuid[UUID_LENGTH] = '\0';
     run_assay = true;
     return 1;
@@ -487,7 +481,6 @@ int change_param() {
     int param_index;
     int value;
 
-    STATUS("Changing parameter value");
     param_index = extract_int_from_string(spark_command.param, 0, PARAM_CODE_LENGTH);
     if (param_index >= PARAM_TOTAL_LENGTH) {
         ERROR_MESSAGE("Parameter index out of range");
@@ -501,8 +494,6 @@ int change_param() {
 }
 
 int reset_params() {
-    STATUS("Resetting parameters to default");
-
     write_default_params();
     read_params();
 
@@ -510,18 +501,19 @@ int reset_params() {
 }
 
 int erase_archived_data() {
-    STATUS("Erase archived data");
+    flash->eraseAll();
     int count = 0;
     flash->write(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
+    reset_params();
     return 1;
 }
 
 int dump_archive() {
-    STATUS("Dumping memory to serial port");
-    int i;
+    int i, param_index;
     char buf[64];
 
-    for (i = 0; i < FLASH_OVERFLOW_ADDRESS; i += 64) {
+    param_index = atoi(spark_command.param);
+    for (i = 0; i < param_index; i += 64) {
         flash->read(buf, i, 64);
         Serial.print(buf);
     }
@@ -548,7 +540,7 @@ int cancel_current_process() {
 int receive_BCODE() {
     int num;
 
-    STATUS("Receiving BCODE payload");
+    STATUS("Receiving BCODE");
 
     num = extract_int_from_string(spark_command.param, 0, BCODE_NUM_LENGTH);
     if (BCODE_count != num) {
@@ -567,13 +559,13 @@ int receive_BCODE() {
     else { // payload packet, contains payload count, packet length, uuid, and payload
         if (num <= BCODE_packets) {
             if (memcmp(BCODE_uuid, &spark_command.param[BCODE_UUID_INDEX], UUID_LENGTH) != 0) {
-                ERROR_MESSAGE("BCODE uuid mismatch");
+                ERROR_MESSAGE(-20);
                 BCODE_length = 0;
                 return -1;
             }
             BCODE_length = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
             if ((BCODE_index + BCODE_length) > BCODE_CAPACITY) {
-                ERROR_MESSAGE("BCODE buffer overflow");
+                ERROR_MESSAGE(-21);
                 BCODE_length = 0;
                 return -1;
             }
@@ -581,7 +573,7 @@ int receive_BCODE() {
             BCODE_index += BCODE_length;
         }
         else {
-            ERROR_MESSAGE("BCODE packet overflow");
+            ERROR_MESSAGE(-22);
             BCODE_length = 0;
             return -1;
         }
@@ -716,7 +708,7 @@ int process_one_BCODE_command(int cmd, int index) {
     }
 
     switch(cmd) {
-        case 0: // Start Assay(integration time, gain)
+        case 0: // Start test(integration time, gain)
             test_record.start_time = Time.now();
             index = get_BCODE_token(index, &param1);
             index = get_BCODE_token(index, &param2);
@@ -955,7 +947,6 @@ void loop(){
     }
 
     if (cancel_process) {
-        STATUS("Process cancelled");
         cancel_process = false;
     }
 }

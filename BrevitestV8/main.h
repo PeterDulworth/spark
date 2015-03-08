@@ -22,24 +22,18 @@
 
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 600
-#define FLASH_OVERFLOW_ADDRESS 450516
+#define FLASH_RECORD_CAPACITY 100
+#define FLASH_OVERFLOW_ADDRESS (TEST_RECORD_START_ADDR + FLASH_RECORD_CAPACITY * TEST_RECORD_LENGTH)
 
 // test
 #define TEST_NUMBER_OF_RECORDS_ADDR 512
-#define TEST_RECORD_LENGTH 900
-#define TEST_RECORD_START_ADDR 516
-#define TEST_RECORD_UUID_OFFSET 10
-#define TEST_RECORD_PARAM_OFFSET 46
-#define TEST_RECORD_BCODE_OFFSET 110
-#define TEST_RECORD_SENSOR_OFFSET 600
-#define TEST_RECORD_STRING_LENGTH 1280
-#define TEST_RECORD_NUM_LENGTH 3
-#define TEST_RECORD_INDEX_LENGTH 6
+#define TEST_RECORD_LENGTH sizeof(test_record)
+#define TEST_RECORD_START_ADDR (TEST_NUMBER_OF_RECORDS_ADDR + sizeof(int))
+#define TEST_RECORD_UUID_OFFSET offsetof(struct BrevitestTestRecord, uuid)
+#define TEST_RECORD_READING_STRING_LENGTH 41
 
 // sensor
 #define SENSOR_COLLECT_SAMPLES 10
-#define SENSOR_SAMPLE_LENGTH 15
 #define SENSOR_SAMPLE_CAPACITY 20
 
 // eeprom addresses
@@ -51,7 +45,7 @@ FlashDevice* flash;
 #define PARAM_CODE_LENGTH 3
 #define PARAM_CAPACITY 16
 #define PARAM_COUNT 10
-#define PARAM_TOTAL_LENGTH (PARAM_COUNT * 4)
+#define PARAM_TOTAL_LENGTH sizeof(Param)
 
 // status
 #define STATUS_LENGTH 622
@@ -63,7 +57,7 @@ FlashDevice* flash;
 #define SPARK_RESET_STAGE_STEPS -60000
 
 // BCODE
-#define BCODE_CAPACITY 490
+#define BCODE_CAPACITY 489
 #define BCODE_PAYLOAD_INDEX 37
 #define BCODE_NUM_LENGTH 3
 #define BCODE_LEN_LENGTH 2
@@ -100,8 +94,6 @@ char BCODE_uuid[UUID_LENGTH + 1];
 char test_uuid[UUID_LENGTH + 1];
 int test_start_time;
 int test_num;
-char test_string[TEST_RECORD_STRING_LENGTH];
-int test_string_length;
 char test_sensor_sample_count;
 
 // sensors
