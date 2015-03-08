@@ -29,11 +29,11 @@ FlashDevice* flash;
 #define TEST_NUMBER_OF_RECORDS_ADDR 512
 #define TEST_RECORD_LENGTH 900
 #define TEST_RECORD_START_ADDR 516
-#define TEST_RECORD_UUID_OFFSET 6
-#define TEST_RECORD_PARAM_OFFSET 38
-#define TEST_RECORD_BCODE_OFFSET 106
+#define TEST_RECORD_UUID_OFFSET 10
+#define TEST_RECORD_PARAM_OFFSET 46
+#define TEST_RECORD_BCODE_OFFSET 110
 #define TEST_RECORD_SENSOR_OFFSET 600
-#define TEST_RECORD_STRING_LENGTH 1300
+#define TEST_RECORD_STRING_LENGTH 1280
 #define TEST_RECORD_NUM_LENGTH 3
 #define TEST_RECORD_INDEX_LENGTH 6
 
@@ -63,7 +63,7 @@ FlashDevice* flash;
 #define SPARK_RESET_STAGE_STEPS -60000
 
 // BCODE
-#define BCODE_CAPACITY 494
+#define BCODE_CAPACITY 490
 #define BCODE_PAYLOAD_INDEX 37
 #define BCODE_NUM_LENGTH 3
 #define BCODE_LEN_LENGTH 2
@@ -178,6 +178,7 @@ struct BrevitestSensorRecord {
 struct BrevitestTestRecord{
     uint16_t num;
     int start_time;
+    int finish_time;
     char uuid[UUID_LENGTH + 1];
     uint8_t num_samples;  // 2 readings per sample (assay, control)
     uint8_t BCODE_version;
