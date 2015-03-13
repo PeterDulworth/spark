@@ -169,12 +169,7 @@ void sample_sensors(int number_of_samples, int delay_between_samples) {
 /////////////////////////////////////////////////////////////
 
 int get_flash_test_address(int num) {
-    int count = get_flash_test_record_count();
-    if (count == 0) { // no records
-      return TEST_RECORD_START_ADDR;
-    }
-
-    if (num < count) {
+    if (num <= get_flash_test_record_count()) {
         return TEST_RECORD_START_ADDR + num * TEST_RECORD_LENGTH;
     }
     else {
@@ -191,10 +186,10 @@ int get_flash_test_address_by_uuid(char *uuid) {
     }
     index = TEST_RECORD_START_ADDR + TEST_RECORD_UUID_OFFSET;
     for (i = 0; i < count; i += 1) {
-        flash->read(test_uuid, index, UUID_LENGTH);
-        test_uuid[UUID_LENGTH] = '\0';
+        flash->read(test_record.uuid, index, UUID_LENGTH);
+        test_record.uuid[UUID_LENGTH] = '\0';
 
-        if (strncmp(uuid, test_uuid, UUID_LENGTH) == 0) {
+        if (strncmp(uuid, test_record.uuid, UUID_LENGTH) == 0) {
             index -= TEST_RECORD_UUID_OFFSET;
             return index;
         }
@@ -222,9 +217,6 @@ void write_test_record_to_flash() {
     test_record.BCODE_version = 1;
     test_record.num_samples = test_sensor_sample_count;
     test_record.BCODE_length = BCODE_length;
-
-    // copy BCODE and sensor data
-    strncpy(test_record.BCODE, test_record.BCODE, BCODE_length);
 
     // write test record
     test_addr = get_flash_test_address(test_record.num);
@@ -273,6 +265,7 @@ int process_test_record(int addr) {
     int packet_max, num_readings, num_readings_per_packet, packet_num;
 
     flash->read(&test_record, addr, TEST_RECORD_LENGTH);
+
     switch (spark_request.index / 10) {
 
         case 0:
@@ -337,10 +330,10 @@ int get_test_record_by_uuid() {
     int addr;
 
     if (spark_request.index == 0) {  // initial request
-        strncpy(test_uuid, spark_request.uuid, UUID_LENGTH);
+        strncpy(test_record.uuid, spark_request.uuid, UUID_LENGTH);
     }
     else {  // continuation request
-        if (strncmp(spark_request.uuid, test_uuid, UUID_LENGTH) != 0) {
+        if (strncmp(spark_request.uuid, test_record.uuid, UUID_LENGTH) != 0) {
             return -3;
         }
     }
@@ -411,7 +404,8 @@ int parse_spark_request(String msg) {
 }
 
 int request_data(String msg) {
-    Serial.println("Requesting data");
+    Serial.print("Requesting data: ");
+    Serial.println(msg);
     if (parse_spark_request(msg) > 0) {
         switch (spark_request.code) {
             case 0: // serial_number
@@ -444,12 +438,12 @@ int write_serial_number() {
 }
 
 int initialize_device() {
-    init_device = !run_assay;
+    init_device = !run_test;
     return 1;
 }
 
 int run_brevitest() {
-    if (run_assay) {
+    if (run_test) {
         ERROR_MESSAGE(-10);
         return -1;
     }
@@ -468,7 +462,7 @@ int run_brevitest() {
 
     strncpy(test_uuid, spark_command.param, UUID_LENGTH);
     test_uuid[UUID_LENGTH] = '\0';
-    run_assay = true;
+    run_test = true;
     return 1;
 }
 
@@ -630,7 +624,7 @@ int run_command(String msg) {
             return write_serial_number();
         case 1: // initialize device
             return initialize_device();
-        case 2: // run assay
+        case 2: // run test
             return run_brevitest();
         case 3: // collect sensor samples
             return collect_sensor_samples();
@@ -783,7 +777,7 @@ int process_one_BCODE_command(int cmd, int index) {
             snprintf(spark_status, param1, &test_record.BCODE[index]);
             index += param1;
             break;
-        case 99: // Finish Assay
+        case 99: // Finish test
             test_record.finish_time = Time.now();
             write_test_record_to_flash();
             reset_stage();
@@ -867,7 +861,7 @@ void setup() {
 
     device_ready = false;
     init_device = false;
-    run_assay = false;
+    run_test = false;
     collect_sensor_data = false;
     cancel_process = false;
 
@@ -896,17 +890,17 @@ void do_initialize_device() {
     device_ready = true;
     init_device = false;
 
-    STATUS("Device initialized and ready to run assay");
+    STATUS("Device initialized and ready to run test");
 }
 
 void do_run_test() {
     device_ready = false;
-    STATUS("Running assay...");
+    STATUS("Running test...");
 
     process_BCODE(0);
 
-    STATUS("Assay complete.");
-    run_assay = false;
+    STATUS("Test complete");
+    run_test = false;
     test_uuid[0] = '\0';
 }
 
@@ -938,7 +932,7 @@ void loop(){
         do_initialize_device();
     }
 
-    if (device_ready && run_assay) {
+    if (device_ready && run_test) {
         do_run_test();
     }
 
