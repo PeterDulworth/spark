@@ -31,6 +31,7 @@ FlashDevice* flash;
 #define TEST_RECORD_START_ADDR (TEST_NUMBER_OF_RECORDS_ADDR + sizeof(int))
 #define TEST_RECORD_UUID_OFFSET offsetof(struct BrevitestTestRecord, uuid)
 #define TEST_RECORD_READING_STRING_LENGTH 41
+#define TEST_DURATION_LENGTH 4
 
 // sensor
 #define SENSOR_COLLECT_SAMPLES 10
@@ -54,7 +55,7 @@ FlashDevice* flash;
 // device
 #define SPARK_REGISTER_SIZE 622
 #define SPARK_ARG_SIZE 63
-#define SPARK_RESET_STAGE_STEPS -60000
+#define SPARK_RESET_STAGE_STEPS -14000
 
 // BCODE
 #define BCODE_CAPACITY 489
@@ -94,6 +95,9 @@ char BCODE_uuid[UUID_LENGTH + 1];
 char test_uuid[UUID_LENGTH + 1];
 int test_start_time;
 int test_num;
+int test_duration;
+int test_progress;
+int test_percent_complete;
 char test_sensor_sample_count;
 
 // sensors

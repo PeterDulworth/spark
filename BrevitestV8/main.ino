@@ -462,6 +462,7 @@ int run_brevitest() {
 
     strncpy(test_uuid, spark_command.param, UUID_LENGTH);
     test_uuid[UUID_LENGTH] = '\0';
+    test_duration = 1000 * extract_int_from_string(spark_command.param, UUID_LENGTH, TEST_DURATION_LENGTH);
     run_test = true;
     return 1;
 }
@@ -694,6 +695,22 @@ int get_BCODE_token(int index, int *token) {
     return i;
 }
 
+void update_progress(int duration) {
+    if (duration == 0) {
+        test_progress = 0;
+        test_percent_complete = 0;
+        return;
+    }
+    if (duration < 0) {
+        test_progress = test_duration;
+        test_percent_complete = 100;
+        return;
+    }
+
+    test_progress += duration;
+    test_percent_complete = 100 * test_progress / test_duration;
+}
+
 int process_one_BCODE_command(int cmd, int index) {
     int i, param1, param2, start_index;
 
@@ -710,19 +727,23 @@ int process_one_BCODE_command(int cmd, int index) {
             init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, (uint8_t) param1, (uint8_t) param2);
             init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, (uint8_t) param1, (uint8_t) param2);
             test_sensor_sample_count = 0;
+            update_progress(0);
             break;
         case 1: // Delay(milliseconds)
             index = get_BCODE_token(index, &param1);
             delay(param1);
+            update_progress(param1);
             break;
         case 2: // Move(number of steps, step delay)
             index = get_BCODE_token(index, &param1);
             index = get_BCODE_token(index, &param2);
             move_steps(param1, param2);
+            update_progress(param1 * param2 / 1000);
             break;
         case 3: // Solenoid on(milliseconds)
             index = get_BCODE_token(index, &param1);
             solenoid_energize(param1);
+            update_progress(param1);
             break;
         case 4: // Device LED on
             analogWrite(pinDeviceLED, 255);
@@ -735,6 +756,7 @@ int process_one_BCODE_command(int cmd, int index) {
             analogWrite(pinDeviceLED, 255);
             delay(param1);
             analogWrite(pinDeviceLED, 0);
+            update_progress(param1);
             break;
         case 7: // Sensor LED on(power)
             index = get_BCODE_token(index, &param1);
@@ -749,6 +771,7 @@ int process_one_BCODE_command(int cmd, int index) {
             param1 = (param1 < SENSOR_SAMPLE_CAPACITY ? param1 : SENSOR_SAMPLE_CAPACITY);
             param1 = (param1 > 0 ? param1 : 0);
             sample_sensors(param1, param2);
+            update_progress(param1 * param2);
             break;
         case 10: // Read QR code
             Serial.println("QR Code not implemented");
@@ -781,6 +804,7 @@ int process_one_BCODE_command(int cmd, int index) {
             test_record.finish_time = Time.now();
             write_test_record_to_flash();
             reset_stage();
+            update_progress(-1);
             break;
     }
 
@@ -824,6 +848,7 @@ void setup() {
     Spark.variable("register", spark_register, STRING);
     Spark.variable("status", spark_status, STRING);
     Spark.variable("testrunning", test_uuid, STRING);
+    Spark.variable("percentdone", &test_percent_complete, INT);
 
     pinMode(pinSolenoid, OUTPUT);
     pinMode(pinStepperStep, OUTPUT);
