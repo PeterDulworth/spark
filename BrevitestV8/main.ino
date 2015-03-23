@@ -803,8 +803,8 @@ int process_one_BCODE_command(int cmd, int index) {
         case 99: // Finish test
             test_record.finish_time = Time.now();
             write_test_record_to_flash();
-            reset_stage();
             update_progress(-1);
+            reset_stage();
             break;
     }
 
