@@ -49,7 +49,7 @@ void move_steps(long steps, int step_delay){
 
     wake_stepper();
 
-    int dir = (steps > 0)? HIGH:LOW;
+    int dir = (steps > 0)? LOW:HIGH;
     steps = abs(steps);
 
     digitalWrite(pinStepperDir,dir);
@@ -58,7 +58,7 @@ void move_steps(long steps, int step_delay){
         if (cancel_process) {
             break;
         }
-        if ((dir == LOW) && (digitalRead(pinLimitSwitch) == LOW)) {
+        if ((dir == HIGH) && (digitalRead(pinLimitSwitch) == LOW)) {
             break;
         }
 
