@@ -49,7 +49,7 @@ void move_steps(long steps, int step_delay){
 
     wake_stepper();
 
-    int dir = (steps > 0)? LOW:HIGH;
+    int dir = (steps > 0)? HIGH:LOW;
     steps = abs(steps);
 
     digitalWrite(pinStepperDir,dir);
@@ -58,7 +58,7 @@ void move_steps(long steps, int step_delay){
         if (cancel_process) {
             break;
         }
-        if ((dir == HIGH) && (digitalRead(pinLimitSwitch) == LOW)) {
+        if ((dir == LOW) && (digitalRead(pinLimitSwitch) == LOW)) {
             break;
         }
 
@@ -600,6 +600,7 @@ int set_and_move_to_calibration_point() {
     EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS + 1, lsb);
 
     move_to_calibration_point();
+    STATUS("Device at calibration point");
 
     return 1;
 }

@@ -144,14 +144,14 @@ struct Param {
 
     Param() {  //  DEFAULT VALUES
         // stepper
-        step_delay_us = 1200;  // microseconds
+        step_delay_us = 1100;  // microseconds
         stepper_wifi_ping_rate = 100;
         stepper_wake_delay_ms = 5; // milliseconds
 
         // solenoid
         solenoid_surge_power = 255;
         solenoid_surge_period_ms = 200; // milliseconds
-        solenoid_sustain_power = 100;
+        solenoid_sustain_power = 150;
 
         // sensors
         sensor_params = (TCS34725_INTEGRATIONTIME_50MS << 8) + TCS34725_GAIN_4X;
