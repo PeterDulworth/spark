@@ -127,17 +127,19 @@ void init_sensor_with_params(TCS34725 *sensor, int sdaPin, int sclPin, uint8_t i
     }
 }
 
-void read_sensor(TCS34725 *sensor, char sensor_code, int sample_number, int number_of_samples) {
-    BrevitestSensorRecord *sample;
-    int index;
+void read_one_sensor(TCS34725 *sensor, char sensor_code, int sample_number, int number_of_samples) {
+    BrevitestSensorSampleRecord *sample;
 
-    if (test_sensor_sample_count < SENSOR_SAMPLE_CAPACITY) {
-        index = 2 * test_sensor_sample_count + (sensor_code == 'A' ? 0 : 1);
-
-        sample = &test_record.sensor_reading[index];
+    if (test_sensor_sample_count < MAX_NUMBER_OF_SAMPLES) {
+        if (sensor_code == 'A') {
+            sample = &assay_buffer[sample_number];
+        }
+        else {
+            sample = &control_buffer[sample_number];
+        }
         sample->sensor_code = sensor_code;
         sample->sample_number = sample_number;
-        sample->reading_time = Time.now();
+        sample->sample_time = Time.now();
 
         Spark.process();
 
@@ -147,19 +149,71 @@ void read_sensor(TCS34725 *sensor, char sensor_code, int sample_number, int numb
     }
 }
 
-void sample_sensors(int number_of_samples, int delay_between_samples) {
+void convert_samples_to_reading(int reading_number, char sensor_code, int number_of_samples) {
+    int start_time, finish_time;
+    int sample_max = 0;
+    int sample_min = 0;
+    int sample_max_index, sample_min_index;
+    int i, index, value;
+    BrevitestSensorSampleRecord *buffer;
+    BrevitestSensorRecord *reading;
+
+    if (sensor_code == 'A') {
+        buffer = assay_buffer;
+        index = 2 * reading_number;
+    }
+    else {
+        buffer = control_buffer;
+        index = 2 * reading_number + 1;
+    }
+
+    for (i = 0; i < number_of_samples; i += 1) {
+        value = (100 * buffer[i].clear - buffer[i].blue) / buffer[i].clear;
+        if (value > sample_max) {
+            sample_max = value;
+            sample_max_index = i;
+        }
+        else if (value < sample_min) {
+            sample_min = value;
+            sample_min_index = i;
+        }
+    }
+
+    value = 0;
+    for (i = 0; i < number_of_samples; i += 1) {
+        if (i != sample_max_index && i != sample_min_index) {
+            value += (100 * buffer[i].clear - buffer[i].blue) / buffer[i].clear;
+        }
+    }
+    value /= number_of_samples;
+
+    reading = &test_record.sensor_reading[index];
+
+    reading->sensor_code = sensor_code;
+    reading->reading_number = reading_number;
+    reading->reading_start_time = buffer[0].sample_time;
+    reading->reading_finish_time = buffer[number_of_samples - 1].sample_time;
+    reading->reading = value;
+}
+
+void read_sensors(int number_of_samples, int delay_between_samples) {
+    test_sensor_sample_count = 0;
     for (int i = 0; i < number_of_samples; i += 1) {
         if (cancel_process) {
             return;
         }
-        read_sensor(&tcsAssay, 'A', i, number_of_samples);
-        read_sensor(&tcsControl, 'C', i, number_of_samples);
+        read_one_sensor(&tcsAssay, 'A', i, number_of_samples);
+        read_one_sensor(&tcsControl, 'C', i, number_of_samples);
         delay(delay_between_samples);
         test_sensor_sample_count++;
-        if (test_sensor_sample_count >= SENSOR_SAMPLE_CAPACITY) {
-            test_sensor_sample_count = SENSOR_SAMPLE_CAPACITY;
+        if (test_sensor_sample_count >= MAX_NUMBER_OF_SAMPLES) {
+            test_sensor_sample_count = MAX_NUMBER_OF_SAMPLES;
         }
     }
+
+    convert_samples_to_reading(test_sensor_reading_count, 'A',number_of_samples);
+    convert_samples_to_reading(test_sensor_reading_count, 'C',number_of_samples);
+    test_sensor_reading_count++;
 }
 
 /////////////////////////////////////////////////////////////
@@ -216,7 +270,7 @@ void write_test_record_to_flash() {
     test_record.uuid[UUID_LENGTH] = '\0';
     memcpy(&test_record.param, &brevitest, PARAM_TOTAL_LENGTH);
     test_record.BCODE_version = 1;
-    test_record.num_samples = test_sensor_sample_count;
+    test_record.num_readings = test_sensor_reading_count;
     test_record.BCODE_length = BCODE_length;
 
     // write test record
@@ -272,7 +326,7 @@ int process_test_record(int addr) {
         case 0:
             len = snprintf(spark_register, SPARK_REGISTER_SIZE, \
                 "%3d\t%11d\t%11d\t%32s\t%3d\t%3d\t%4d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n", \
-                test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.num_samples, test_record.BCODE_version, test_record.BCODE_length, \
+                test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.num_readings, test_record.BCODE_version, test_record.BCODE_length, \
                 test_record.param.step_delay_us, test_record.param.stepper_wifi_ping_rate, test_record.param.stepper_wake_delay_ms, \
                 test_record.param.solenoid_surge_power, test_record.param.solenoid_surge_period_ms, test_record.param.solenoid_sustain_power, \
                 test_record.param.sensor_params, test_record.param.sensor_ms_between_samples, test_record.param.sensor_led_power, \
@@ -285,7 +339,7 @@ int process_test_record(int addr) {
             break;
         case 10:
             packet_num = spark_request.index % 100;
-            num_readings = (2 * test_record.num_samples);
+            num_readings = (2 * test_record.num_readings);
             num_readings_per_packet = SPARK_REGISTER_SIZE / TEST_RECORD_READING_STRING_LENGTH;
             packet_max = num_readings / num_readings_per_packet;
             packet_max -= ((num_readings % num_readings_per_packet) == 0 ? 1 : 0);
@@ -295,9 +349,9 @@ int process_test_record(int addr) {
             for (i = start; i < finish; i += 1) {
                 reading = &test_record.sensor_reading[i];
                 len += snprintf(&spark_register[len], SPARK_REGISTER_SIZE - len, \
-                    "%c\t%2d\t%11d\t%5d\t%5d\t%5d\t%5d\n", \
-                    reading->sensor_code, reading->sample_number, reading->reading_time, \
-                    reading->clear, reading->red, reading->green, reading->blue);
+                    "%c\t%2d\t%11d\t%11d\t%5d\n", \
+                    reading->sensor_code, reading->reading_number, reading->reading_start_time, \
+                    reading->reading_finish_time, reading->reading);
             }
             spark_request.index = (packet_num < packet_max ? 101 + packet_num : 0);
     }
@@ -732,7 +786,7 @@ int process_one_BCODE_command(int cmd, int index) {
 
             init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, (uint8_t) param1, (uint8_t) param2);
             init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, (uint8_t) param1, (uint8_t) param2);
-            test_sensor_sample_count = 0;
+            test_sensor_reading_count = 0;
             update_progress(0);
             break;
         case 1: // Delay(milliseconds)
@@ -774,9 +828,9 @@ int process_one_BCODE_command(int cmd, int index) {
         case 9: // Read sensors(number of samples)
             index = get_BCODE_token(index, &param1);
             index = get_BCODE_token(index, &param2);
-            param1 = (param1 < SENSOR_SAMPLE_CAPACITY ? param1 : SENSOR_SAMPLE_CAPACITY);
+            param1 = (param1 < SENSOR_READING_CAPACITY ? param1 : SENSOR_READING_CAPACITY);
             param1 = (param1 > 0 ? param1 : 0);
-            sample_sensors(param1, param2);
+            read_sensors(param1, param2);
             update_progress(param1 * param2);
             break;
         case 10: // Read QR code
@@ -946,8 +1000,8 @@ void do_sensor_data_collection() {
 
     STATUS("Collecting sensor data");
     test_record.start_time = Time.now();
-    test_sensor_sample_count = 0;
-    CANCELLABLE(sample_sensors(SENSOR_COLLECT_SAMPLES, brevitest.sensor_ms_between_samples);)
+    test_sensor_reading_count = 0;
+    CANCELLABLE(read_sensors(SENSOR_COLLECT_SAMPLES, brevitest.sensor_ms_between_samples);)
     test_record.finish_time = Time.now();
     CANCELLABLE(write_test_record_to_flash();)
 
