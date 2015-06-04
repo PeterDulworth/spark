@@ -98,6 +98,7 @@ int test_num;
 int test_duration;
 int test_progress;
 int test_percent_complete;
+unsigned long test_last_progress_update;
 uint8_t test_sensor_sample_count;
 uint8_t test_sensor_reading_count;
 
@@ -162,22 +163,17 @@ struct Param {
     }
 } brevitest;
 
-struct BrevitestSensorSampleRecord {
+struct BrevitestSensorRecord {
     char sensor_code;
     uint8_t sample_number;
     int sample_time;
     uint16_t clear;
+    uint16_t red;
+    uint16_t green;
     uint16_t blue;
 };
-BrevitestSensorSampleRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
-BrevitestSensorSampleRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
-
-struct BrevitestSensorRecord {
-    char sensor_code;
-    uint8_t number;
-    int start_time;
-    uint16_t value;
-};
+BrevitestSensorRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
+BrevitestSensorRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
 
 struct BrevitestTestRecord{
     uint16_t num;

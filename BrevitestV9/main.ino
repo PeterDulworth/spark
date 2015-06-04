@@ -213,7 +213,7 @@ void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
         read_one_sensor(&tcsControl, 'C', i);
         delay(SENSOR_DELAY_BETWEEN_SAMPLES);
         if (reading_code == 0) {
-            update_progress("Taking inital sensor baseline readings", SENSOR_DELAY_BETWEEN_SAMPLES);
+            update_progress("Taking baseline readings", SENSOR_DELAY_BETWEEN_SAMPLES);
         }
         else {
             update_progress("Reading test results", SENSOR_DELAY_BETWEEN_SAMPLES);
@@ -270,9 +270,9 @@ int get_flash_test_record_count() {
 
 void write_test_record_to_flash() {
     int test_addr;
-
     // build test record
     test_record.num = get_flash_test_record_count();
+
     strncpy(test_record.uuid, test_uuid, UUID_LENGTH);
     test_record.uuid[UUID_LENGTH] = '\0';
     memcpy(&test_record.param, &brevitest, PARAM_TOTAL_LENGTH);
@@ -739,21 +739,32 @@ int get_BCODE_token(int index, int *token) {
 }
 
 void update_progress(char *message, int duration) {
-    if (duration == 0) {
-        test_progress = 0;
-        test_percent_complete = 0;
-    }
-    else if (duration < 0) {
-        test_progress = test_duration;
-        test_percent_complete = 100;
-    }
-    else {
-        test_progress += duration;
-        test_percent_complete = 100 * test_progress / test_duration;
-    }
+    unsigned long now = millis();
 
-    STATUS("%s\n%s\n%d", message, test_uuid, test_percent_complete);
-    Serial.println(spark_status);
+    if (!cancel_process) {
+        if (duration == 0) {
+            test_progress = 0;
+            test_percent_complete = 0;
+        }
+        else if (duration < 0) {
+            test_progress = test_duration;
+            test_percent_complete = 100;
+        }
+        else {
+            test_progress += duration;
+            test_percent_complete = 100 * test_progress / test_duration;
+        }
+
+        STATUS("%s\n%s\n%d", message, test_uuid, test_percent_complete);
+        Serial.println(spark_status);
+        if (now - test_last_progress_update < 1000) {
+            return;
+        }
+        else {
+            Spark.publish(test_uuid, spark_status, 60, PRIVATE);
+            test_last_progress_update = now;
+        }
+    }
 }
 
 int process_one_BCODE_command(int cmd, int index) {
@@ -784,7 +795,7 @@ int process_one_BCODE_command(int cmd, int index) {
             break;
         case 1: // Delay(milliseconds)
             index = get_BCODE_token(index, &param1);
-            update_progress("Pausing", param1);
+            update_progress("", param1);
             delay(param1);
             break;
         case 2: // Move(number of steps, step delay)
@@ -931,6 +942,7 @@ void setup() {
     test_in_progress = false;
     collect_sensor_data = false;
     cancel_process = false;
+    test_last_progress_update = millis();
 
     BCODE_count = 0;
     BCODE_length = 0;
