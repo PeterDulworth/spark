@@ -129,7 +129,6 @@ void init_sensor_with_params(TCS34725 *sensor, int sdaPin, int sclPin, uint8_t i
 
 void read_one_sensor(TCS34725 *sensor, char sensor_code, int sample_number) {
     BrevitestSensorSampleRecord *sample;
-    uint16_t red, green;
 
     if (sensor_code == 'A') {
         sample = &assay_buffer[sample_number];
@@ -143,12 +142,13 @@ void read_one_sensor(TCS34725 *sensor, char sensor_code, int sample_number) {
 
     Spark.process();
 
-    sensor->getRawData(&red, &green, &sample->blue, &sample->clear);
+    sensor->getRawData(&sample->red, &sample->green, &sample->blue, &sample->clear);
 }
 
 void convert_samples_to_reading(int reading_code, char sensor_code) {
     int i, j, k;
-    int value, varray[SENSOR_NUMBER_OF_SAMPLES];
+    int red, green, blue, clear;
+    int index[SENSOR_NUMBER_OF_SAMPLES];
     BrevitestSensorSampleRecord *buffer;
     BrevitestSensorRecord *reading;
 
@@ -171,37 +171,36 @@ void convert_samples_to_reading(int reading_code, char sensor_code) {
         }
     }
 
-    for (i = 0; i < SENSOR_NUMBER_OF_SAMPLES; i += 1) {
-        value = (100 * ((int) buffer[i].clear - (int) buffer[i].blue)) / (int) buffer[i].clear;
-        if (i == 0) {
-            varray[0] = value;
-        }
-        else {
-            for (j = 0; j < i; j += 1) {
-                if (value < varray[j]) {
-                    for (k = i; k > j; k -= 1) {
-                        varray[k] = varray[k - 1];
-                    }
-                    varray[j] = value;
-                    break;
+    index[0] = 0;
+    for (i = 1; i < SENSOR_NUMBER_OF_SAMPLES; i += 1) {
+        for (j = 0; j < i; j += 1) {
+            if (buffer[i].clear < buffer[index[j]].clear) {
+                for (k = i; k > j; k -= 1) {
+                    index[k] = index[k - 1];
                 }
-                if (j == i - 1) {
-                    varray[i] = value;
-                }
+                index[j] = i;
+                break;
+            }
+            if (j == i - 1) {
+                index[i] = i;
             }
         }
     }
 
-    value = 0;
-    for (i = 1; i < SENSOR_NUMBER_OF_SAMPLES - 1; i += 1) {
-        value += varray[i];
+    reading->red_norm = reading->green_norm = reading->blue_norm = 0;
+    for (j = 1; j < SENSOR_NUMBER_OF_SAMPLES - 1; j += 1) {
+        i = index[j];
+        reading->red_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].red)) / (int) buffer[i].clear;
+        reading->green_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].green)) / (int) buffer[i].clear;
+        reading->blue_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].blue)) / (int) buffer[i].clear;
     }
-    value /= SENSOR_NUMBER_OF_SAMPLES - 2;
+    reading->red_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
+    reading->green_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
+    reading->blue_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
 
     reading->sensor_code = sensor_code;
     reading->number = reading_code;
     reading->start_time = buffer[0].sample_time;
-    reading->value = value;
 }
 
 void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
@@ -328,7 +327,7 @@ int process_test_record(int addr) {
     flash->read(&test_record, addr, TEST_RECORD_LENGTH);
 
     len = snprintf(spark_register, SPARK_REGISTER_SIZE, \
-        "%3d\t%11d\t%11d\t%24s\t%3d\t%4d\t%3d\t%3d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n%c\t%2d\t%11d\t%5d\n%c\t%2d\t%11d\t%5d\n%c\t%2d\t%11d\t%5d\n%c\t%2d\t%11d\t%5d\n", \
+        "%3d\t%11d\t%11d\t%24s\t%3d\t%4d\t%3d\t%3d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n", \
         test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.BCODE_version, test_record.BCODE_length, \
         test_record.integration_time, test_record.gain, \
         test_record.param.step_delay_us, test_record.param.stepper_wifi_ping_rate, test_record.param.stepper_wake_delay_ms, \
@@ -336,13 +335,17 @@ int process_test_record(int addr) {
         test_record.param.sensor_params, test_record.param.sensor_ms_between_samples, test_record.param.sensor_led_power, \
         test_record.param.sensor_led_warmup_ms, \
         test_record.sensor_reading_initial_assay.sensor_code, test_record.sensor_reading_initial_assay.number, \
-        test_record.sensor_reading_initial_assay.start_time, test_record.sensor_reading_initial_assay.value, \
+        test_record.sensor_reading_initial_assay.start_time, test_record.sensor_reading_initial_assay.red_norm, \
+        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
         test_record.sensor_reading_initial_control.sensor_code, test_record.sensor_reading_initial_control.number, \
-        test_record.sensor_reading_initial_control.start_time, test_record.sensor_reading_initial_control.value, \
+        test_record.sensor_reading_initial_control.start_time, test_record.sensor_reading_initial_control.red_norm, \
+        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
         test_record.sensor_reading_final_assay.sensor_code, test_record.sensor_reading_final_assay.number, \
-        test_record.sensor_reading_final_assay.start_time, test_record.sensor_reading_final_assay.value, \
+        test_record.sensor_reading_final_assay.start_time, test_record.sensor_reading_final_assay.red_norm, \
+        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
         test_record.sensor_reading_final_control.sensor_code, test_record.sensor_reading_final_control.number, \
-        test_record.sensor_reading_final_control.start_time, test_record.sensor_reading_final_control.value);
+        test_record.sensor_reading_final_control.start_time, test_record.sensor_reading_final_control.red_norm, \
+        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm);
 
     spark_register[len] = '\0';
     return 0;

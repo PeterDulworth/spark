@@ -163,17 +163,26 @@ struct Param {
     }
 } brevitest;
 
-struct BrevitestSensorRecord {
+struct BrevitestSensorSampleRecord {
     char sensor_code;
     uint8_t sample_number;
     int sample_time;
-    uint16_t clear;
     uint16_t red;
     uint16_t green;
     uint16_t blue;
+    uint16_t clear;
 };
-BrevitestSensorRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
-BrevitestSensorRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
+BrevitestSensorSampleRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
+BrevitestSensorSampleRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
+
+struct BrevitestSensorRecord {
+    char sensor_code;
+    uint8_t number;
+    int start_time;
+    uint16_t red_norm;
+    uint16_t green_norm;
+    uint16_t blue_norm;
+};
 
 struct BrevitestTestRecord{
     uint16_t num;
