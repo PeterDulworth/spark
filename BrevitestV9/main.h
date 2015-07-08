@@ -33,9 +33,8 @@ FlashDevice* flash;
 #define TEST_RECORD_READING_STRING_LENGTH (63 - UUID_LENGTH)
 #define TEST_DURATION_LENGTH 4
 
-// sensor
-#define SENSOR_COLLECT_SAMPLES 10
-#define SENSOR_SAMPLE_CAPACITY 20
+#define SENSOR_NUMBER_OF_SAMPLES 10
+#define SENSOR_DELAY_BETWEEN_SAMPLES 500
 
 // eeprom addresses
 #define EEPROM_ADDR_DEFAULT_FLAG 0
@@ -80,7 +79,8 @@ int pinControlSCL = D6;
 // global variables
 bool device_ready;
 bool init_device;
-bool run_test;
+bool start_test;
+bool test_in_progress;
 bool collect_sensor_data;
 bool cancel_process;
 
@@ -98,7 +98,9 @@ int test_num;
 int test_duration;
 int test_progress;
 int test_percent_complete;
-char test_sensor_sample_count;
+unsigned long test_last_progress_update;
+uint8_t test_sensor_sample_count;
+uint8_t test_sensor_reading_count;
 
 // sensors
 TCS34725 tcsAssay;
@@ -150,25 +152,36 @@ struct Param {
 
         // solenoid
         solenoid_surge_power = 255;
-        solenoid_surge_period_ms = 200; // milliseconds
-        solenoid_sustain_power = 150;
+        solenoid_surge_period_ms = 300; // milliseconds
+        solenoid_sustain_power = 200;
 
         // sensors
-        sensor_params = (TCS34725_INTEGRATIONTIME_50MS << 8) + TCS34725_GAIN_4X;
+        sensor_params = (TCS34725_GAIN_4X << 8) + TCS34725_INTEGRATIONTIME_50MS;
         sensor_ms_between_samples = 1000;
         sensor_led_power = 20;
         sensor_led_warmup_ms = 10000;
     }
 } brevitest;
 
-struct BrevitestSensorRecord {
+struct BrevitestSensorSampleRecord {
     char sensor_code;
     uint8_t sample_number;
-    int reading_time;
-    uint16_t clear;
+    int sample_time;
     uint16_t red;
     uint16_t green;
     uint16_t blue;
+    uint16_t clear;
+};
+BrevitestSensorSampleRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
+BrevitestSensorSampleRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
+
+struct BrevitestSensorRecord {
+    char sensor_code;
+    uint8_t number;
+    int start_time;
+    uint16_t red_norm;
+    uint16_t green_norm;
+    uint16_t blue_norm;
 };
 
 struct BrevitestTestRecord{
@@ -176,10 +189,14 @@ struct BrevitestTestRecord{
     int start_time;
     int finish_time;
     char uuid[UUID_LENGTH + 1];
-    uint8_t num_samples;  // 2 readings per sample (assay, control)
     uint8_t BCODE_version;
     uint16_t BCODE_length;
+    uint8_t integration_time;
+    uint8_t gain;
     Param param;
+    BrevitestSensorRecord sensor_reading_initial_assay;
+    BrevitestSensorRecord sensor_reading_initial_control;
+    BrevitestSensorRecord sensor_reading_final_assay;
+    BrevitestSensorRecord sensor_reading_final_control;
     char BCODE[BCODE_CAPACITY];
-    BrevitestSensorRecord sensor_reading[2 * SENSOR_SAMPLE_CAPACITY];
 } test_record;
