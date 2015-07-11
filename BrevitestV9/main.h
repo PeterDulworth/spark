@@ -6,7 +6,8 @@
 // GLOBAL VARIABLES AND DEFINES
 
 // general constants
-#define FIRMWARE_VERSION 0x08
+#define FIRMWARE_VERSION 0x09
+#define FLASH_DATA_FORMAT_VERSION 0x01
 #define SERIAL_NUMBER_LENGTH 19
 #define UUID_LENGTH 24
 #define COMMAND_CODE_LENGTH 2
@@ -22,8 +23,12 @@
 
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 100
-#define FLASH_OVERFLOW_ADDRESS (TEST_RECORD_START_ADDR + FLASH_RECORD_CAPACITY * TEST_RECORD_LENGTH)
+#define FLASH_RECORD_CAPACITY 1000
+#define FLASH_ASSAY_START_ADDR 524288
+#define FLASH_ASSAY_CAPACITY 1000
+#define FLASH_CARTRIDGE_START_ADDR 262144
+#define FLASH_CARTRIDGE_CAPACITY 1000
+#define FLASH_OVERFLOW_ADDRESS (FLASH_CARTRIDGE_START_ADDR + FLASH_CARTRIDGE_CAPACITY * UUID_LENGTH)
 
 // test
 #define TEST_NUMBER_OF_RECORDS_ADDR 512
@@ -37,9 +42,14 @@ FlashDevice* flash;
 #define SENSOR_DELAY_BETWEEN_SAMPLES 500
 
 // eeprom addresses
-#define EEPROM_ADDR_DEFAULT_FLAG 0
-#define EEPROM_ADDR_SERIAL_NUMBER 1
-#define EEPROM_ADDR_CALIBRATION_STEPS 20
+#define EEPROM_ADDR_FIRMWARE_VERSION 0
+#define EEPROM_ADDR_FIRMWARE_VERSION_LENGTH 2
+#define EEPROM_ADDR_FLASH_DATA_FORMAT_VERSION 2
+#define EEPROM_ADDR_FLASH_DATA_FORMAT_VERSION_LENGTH 2
+#define EEPROM_ADDR_SERIAL_NUMBER 4
+#define EEPROM_ADDR_SERIAL_NUMBER_LENGTH 20
+#define EEPROM_ADDR_CALIBRATION_STEPS 24
+#define EEPROM_ADDR_CALIBRATION_STEPS_LENGTH 2
 
 // params
 #define PARAM_CODE_LENGTH 3
@@ -62,6 +72,10 @@ FlashDevice* flash;
 #define BCODE_LEN_LENGTH 2
 #define BCODE_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
 #define BCODE_PAYLOAD_INDEX (BCODE_UUID_INDEX + UUID_LENGTH)
+
+// assay
+#define ASSAY_NAME_MAX_LENGTH 64
+#define ASSAY_STANDARD_CURVE_MAX_POINTS 20
 
 // pin definitions
 int pinSolenoid = A1;
@@ -188,7 +202,7 @@ struct BrevitestTestRecord{
     uint16_t num;
     int start_time;
     int finish_time;
-    char uuid[UUID_LENGTH + 1];
+    char uuid[UUID_LENGTH];
     uint8_t BCODE_version;
     uint16_t BCODE_length;
     uint8_t integration_time;
@@ -200,3 +214,18 @@ struct BrevitestTestRecord{
     BrevitestSensorRecord sensor_reading_final_control;
     char BCODE[BCODE_CAPACITY];
 } test_record;
+
+struct BrevitestStandardCurvePoint {
+    double x;
+    double y;
+};
+
+struct BrevitestAssayRecord {
+    char id[UUID_LENGTH];
+    char name[ASSAY_NAME_MAX_LENGTH];
+    double redMax;
+    double greenMax;
+    double greenMin;
+    double redMin;
+    BrevitestStandardCurvePoint standardCurve[ASSAY_STANDARD_CURVE_MAX_POINTS];
+};

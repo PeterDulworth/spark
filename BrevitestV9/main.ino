@@ -248,7 +248,6 @@ int get_flash_test_address_by_uuid(char *uuid) {
     index = TEST_RECORD_START_ADDR + TEST_RECORD_UUID_OFFSET;
     for (i = 0; i < count; i += 1) {
         flash->read(test_record.uuid, index, UUID_LENGTH);
-        test_record.uuid[UUID_LENGTH] = '\0';
 
         if (strncmp(uuid, test_record.uuid, UUID_LENGTH) == 0) {
             index -= TEST_RECORD_UUID_OFFSET;
@@ -273,7 +272,6 @@ void write_test_record_to_flash() {
     test_record.num = get_flash_test_record_count();
 
     strncpy(test_record.uuid, test_uuid, UUID_LENGTH);
-    test_record.uuid[UUID_LENGTH] = '\0';
     memcpy(&test_record.param, &brevitest, PARAM_TOTAL_LENGTH);
     test_record.BCODE_version = 1;
     test_record.BCODE_length = BCODE_length;
@@ -838,9 +836,8 @@ int process_one_BCODE_command(int cmd, int index) {
         case 10: // Read QR code
             Serial.println("QR Code not implemented");
             break;
-        case 11: // Disable sensor
-            tcsAssay.disable();
-            tcsControl.disable();
+        case 11: // Beep (milliseconds)
+            Serial.println("Beep not implemented");
             break;
         case 12: // Repeat begin(number of iterations)
             index = get_BCODE_token(index, &param1);
@@ -855,6 +852,20 @@ int process_one_BCODE_command(int cmd, int index) {
             break;
         case 13: // Repeat end
             return -index;
+            break;
+        case 14: // Enable sensor (integration time, gain)
+            index = get_BCODE_token(index, &param1);
+            index = get_BCODE_token(index, &param2);
+
+            test_record.integration_time =  param1;
+            test_record.gain =  param2;
+            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, test_record.integration_time, test_record.gain);
+            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, test_record.integration_time, test_record.gain);
+            test_sensor_reading_count = 0;
+            break;
+        case 15: // Disable sensor
+            tcsAssay.disable();
+            tcsControl.disable();
             break;
         case 99: // Finish test
             test_record.finish_time = Time.now();
