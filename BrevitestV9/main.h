@@ -23,11 +23,13 @@
 
 // flash
 FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 1000
-#define FLASH_ASSAY_START_ADDR 524288
-#define FLASH_ASSAY_CAPACITY 1000
-#define FLASH_CARTRIDGE_START_ADDR 262144
-#define FLASH_CARTRIDGE_CAPACITY 1000
+#define FLASH_RECORD_CAPACITY 1024
+#define FLASH_ASSAY_COUNT_ADDR 262144
+#define FLASH_ASSAY_FIRST_RECORD_ADDR 262148
+#define FLASH_ASSAY_CAPACITY 200
+#define FLASH_CARTRIDGE_COUNT_ADDR 524288
+#define FLASH_CARTRIDGE_FIRST_RECORD_ADDR 524292
+#define FLASH_CARTRIDGE_CAPACITY 1024
 #define FLASH_OVERFLOW_ADDRESS (FLASH_CARTRIDGE_START_ADDR + FLASH_CARTRIDGE_CAPACITY * UUID_LENGTH)
 
 // test
@@ -77,18 +79,27 @@ FlashDevice* flash;
 #define ASSAY_NAME_MAX_LENGTH 64
 #define ASSAY_STANDARD_CURVE_MAX_POINTS 20
 
+// QR scanner
+#define QR_COMMAND_PREFIX "\x02M\x0D"
+#define QR_COMMAND_ACTIVATE "\x02T\x0D"
+#define QR_COMMAND_DEACTIVATE "\x02U\x0D"
+#define QR_READ_TIMEOUT 5000
+
 // pin definitions
-int pinSolenoid = A1;
-int pinStepperStep = D2;
-int pinStepperDir = D1;
-int pinStepperSleep = D0;
 int pinLimitSwitch = A0;
+int pinSolenoid = A1;
+int pinQRPower = A2;
+//  A3 unassigned
 int pinSensorLED = A4;
 int pinDeviceLED = A5;
+int pinStepperSleep = D0;
+int pinStepperDir = D1;
+int pinStepperStep = D2;
 int pinAssaySDA = D3;
 int pinAssaySCL = D4;
 int pinControlSDA = D5;
 int pinControlSCL = D6;
+int pinQRTrigger = D7;
 
 // global variables
 bool device_ready;
@@ -220,6 +231,11 @@ struct BrevitestStandardCurvePoint {
     double y;
 };
 
+struct BrevitestStandardCurve {
+    uint16_t number_of_points;
+    BrevitestStandardCurvePoint point[ASSAY_STANDARD_CURVE_MAX_POINTS];
+}
+
 struct BrevitestAssayRecord {
     char id[UUID_LENGTH];
     char name[ASSAY_NAME_MAX_LENGTH];
@@ -227,5 +243,5 @@ struct BrevitestAssayRecord {
     double greenMax;
     double greenMin;
     double redMin;
-    BrevitestStandardCurvePoint standardCurve[ASSAY_STANDARD_CURVE_MAX_POINTS];
+    BrevitestStandardCurve standardCurve;
 };

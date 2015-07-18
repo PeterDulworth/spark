@@ -769,7 +769,7 @@ void update_progress(char *message, int duration) {
 }
 
 int process_one_BCODE_command(int cmd, int index) {
-    int i, param1, param2, start_index;
+    int buf, i, param1, param2, start_index, timeout;
     uint8_t integration_time, gain;
 
     if (cancel_process) {
@@ -834,7 +834,26 @@ int process_one_BCODE_command(int cmd, int index) {
             read_sensors(1);
             break;
         case 10: // Read QR code
-            Serial.println("QR Code not implemented");
+            digitalWrite(pinQRPower, HIGH);
+            delay(1000);
+            Serial1.begin(115200);
+            digitalWrite(pinQRTrigger, LOW);
+            delay(50);
+            digitalWrite(pinQRTrigger, HIGH);
+            timeout = Time.now() + QR_READ_TIMEOUT;
+            while (!Serial1.available()) {
+                if (Time.now() > timeout) {
+                    return -1;
+                }
+                Spark.process();
+            }
+            i = 0;
+            do {
+                buf = Serial1.read();
+                if (buf == -1 || test_uuid[i++] != (char) buf);
+                    return -1;
+                }
+            } while (i < UUID_LENGTH);
             break;
         case 11: // Beep (milliseconds)
             Serial.println("Beep not implemented");
@@ -926,11 +945,15 @@ void setup() {
     pinMode(pinAssaySCL, OUTPUT);
     pinMode(pinControlSDA, OUTPUT);
     pinMode(pinControlSCL, OUTPUT);
+    pinMode(pinQRTrigger, OUTPUT);
 
     digitalWrite(pinSolenoid, LOW);
     digitalWrite(pinStepperSleep, LOW);
+    digitalWrite(pinQRTrigger, HIGH);
+    digitalWrite(pinQRPower, HIGH);
 
-    Serial.begin(9600);
+    Serial.begin(9600);     // standard serial port
+    Serial1.begin(115200);  // QR scanner interface through RX/TX pins
 //    while (!Serial.available()) {
 //        Spark.process();
 //    }
