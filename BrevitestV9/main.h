@@ -10,7 +10,6 @@
 #define FLASH_DATA_FORMAT_VERSION 0x01
 #define SERIAL_NUMBER_LENGTH 19
 #define UUID_LENGTH 24
-#define COMMAND_CODE_LENGTH 2
 #define ERROR_MESSAGE(err) Serial.println(err)
 #define CANCELLABLE(x) if (!cancel_process) {x}
 
@@ -21,52 +20,17 @@
 #define REQUEST_CODE_LENGTH 2
 #define REQUEST_PARAM_INDEX (REQUEST_CODE_INDEX + REQUEST_CODE_LENGTH)
 
-// flash
-FlashDevice* flash;
-#define FLASH_RECORD_CAPACITY 1024
-#define FLASH_ASSAY_COUNT_ADDR 262144
-#define FLASH_ASSAY_FIRST_RECORD_ADDR 262148
-#define FLASH_ASSAY_CAPACITY 200
-#define FLASH_CARTRIDGE_COUNT_ADDR 524288
-#define FLASH_CARTRIDGE_FIRST_RECORD_ADDR 524292
-#define FLASH_CARTRIDGE_CAPACITY 1024
-#define FLASH_OVERFLOW_ADDRESS (FLASH_CARTRIDGE_START_ADDR + FLASH_CARTRIDGE_CAPACITY * UUID_LENGTH)
-
-// test
-#define TEST_NUMBER_OF_RECORDS_ADDR 512
-#define TEST_RECORD_LENGTH sizeof(test_record)
-#define TEST_RECORD_START_ADDR (TEST_NUMBER_OF_RECORDS_ADDR + sizeof(int))
-#define TEST_RECORD_UUID_OFFSET offsetof(struct BrevitestTestRecord, uuid)
-#define TEST_RECORD_READING_STRING_LENGTH (63 - UUID_LENGTH)
-#define TEST_DURATION_LENGTH 4
-
 #define SENSOR_NUMBER_OF_SAMPLES 10
-#define SENSOR_DELAY_BETWEEN_SAMPLES 500
-
-// eeprom addresses
-#define EEPROM_ADDR_FIRMWARE_VERSION 0
-#define EEPROM_ADDR_FIRMWARE_VERSION_LENGTH 2
-#define EEPROM_ADDR_FLASH_DATA_FORMAT_VERSION 2
-#define EEPROM_ADDR_FLASH_DATA_FORMAT_VERSION_LENGTH 2
-#define EEPROM_ADDR_SERIAL_NUMBER 4
-#define EEPROM_ADDR_SERIAL_NUMBER_LENGTH 20
-#define EEPROM_ADDR_CALIBRATION_STEPS 24
-#define EEPROM_ADDR_CALIBRATION_STEPS_LENGTH 2
 
 // params
 #define PARAM_CODE_LENGTH 3
-#define PARAM_CAPACITY 16
-#define PARAM_COUNT 10
-#define PARAM_TOTAL_LENGTH sizeof(Param)
+#define PARAM_COUNT 9
+#define PARAM_TOTAL_LENGTH 40
 
-// status
-#define STATUS_LENGTH 622
-#define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
-
-// device
-#define SPARK_REGISTER_SIZE 622
-#define SPARK_ARG_SIZE 63
-#define SPARK_RESET_STAGE_STEPS -14000
+// caches
+#define ASSAY_CACHE_SIZE 2
+#define TEST_CACHE_SIZE 5
+#define CACHE_SIZE_BYTES 2048
 
 // BCODE
 #define BCODE_CAPACITY 489
@@ -75,9 +39,14 @@ FlashDevice* flash;
 #define BCODE_UUID_INDEX (BCODE_NUM_LENGTH + BCODE_LEN_LENGTH)
 #define BCODE_PAYLOAD_INDEX (BCODE_UUID_INDEX + UUID_LENGTH)
 
-// assay
-#define ASSAY_NAME_MAX_LENGTH 64
-#define ASSAY_STANDARD_CURVE_MAX_POINTS 20
+// status
+#define STATUS_LENGTH 622
+#define STATUS(...) snprintf(spark_status, STATUS_LENGTH, __VA_ARGS__)
+
+// device
+#define PARTICLE_REGISTER_SIZE 622
+#define PARTICLE_ARG_SIZE 63
+#define PARTICLE_COMMAND_CODE_LENGTH 2
 
 // QR scanner
 #define QR_COMMAND_PREFIX "\x02M\x0D"
@@ -118,11 +87,6 @@ char BCODE_uuid[UUID_LENGTH + 1];
 
 // test
 char test_uuid[UUID_LENGTH + 1];
-int test_start_time;
-int test_num;
-int test_duration;
-int test_progress;
-int test_percent_complete;
 unsigned long test_last_progress_update;
 uint8_t test_sensor_sample_count;
 uint8_t test_sensor_reading_count;
@@ -136,61 +100,25 @@ char spark_register[SPARK_REGISTER_SIZE + 1];
 char spark_status[STATUS_LENGTH + 1];
 
 struct Command {
-    char arg[SPARK_ARG_SIZE + 1];
+    char arg[PARTICLE_ARG_SIZE + 1];
     int code;
-    char param[SPARK_ARG_SIZE - COMMAND_CODE_LENGTH + 1];
+    char param[PARTICLE_ARG_SIZE - COMMAND_CODE_LENGTH + 1];
 } spark_command;
 
 struct Request {
     char arg[SPARK_ARG_SIZE + 1];
-    char uuid[UUID_LENGTH + 1];
+    char uuid[UUID_LENGTH];
     int code;
     int index;
     char param[SPARK_ARG_SIZE - UUID_LENGTH - REQUEST_CODE_LENGTH - REQUEST_INDEX_LENGTH + 1];
     Request() {
-        uuid[0] = '\0';
+      arg[0] = '\0';
+      uuid[0] = '\0';
+      param[0] = '\0';
     }
 } spark_request;
 
-struct Param {
-    // stepper
-    int step_delay_us;  // microseconds
-    int stepper_wifi_ping_rate;
-    int stepper_wake_delay_ms; // milliseconds
-
-    // solenoid
-    int solenoid_surge_power;
-    int solenoid_surge_period_ms; // milliseconds
-    int solenoid_sustain_power;
-
-    // sensors
-    int sensor_params;
-    int sensor_ms_between_samples;
-    int sensor_led_power;
-    int sensor_led_warmup_ms;
-
-    Param() {  //  DEFAULT VALUES
-        // stepper
-        step_delay_us = 1200;  // microseconds
-        stepper_wifi_ping_rate = 100;
-        stepper_wake_delay_ms = 5; // milliseconds
-
-        // solenoid
-        solenoid_surge_power = 255;
-        solenoid_surge_period_ms = 300; // milliseconds
-        solenoid_sustain_power = 200;
-
-        // sensors
-        sensor_params = (TCS34725_GAIN_4X << 8) + TCS34725_INTEGRATIONTIME_50MS;
-        sensor_ms_between_samples = 1000;
-        sensor_led_power = 20;
-        sensor_led_warmup_ms = 10000;
-    }
-} brevitest;
-
 struct BrevitestSensorSampleRecord {
-    char sensor_code;
-    uint8_t sample_number;
     int sample_time;
     uint16_t red;
     uint16_t green;
@@ -200,48 +128,64 @@ struct BrevitestSensorSampleRecord {
 BrevitestSensorSampleRecord assay_buffer[SENSOR_NUMBER_OF_SAMPLES];
 BrevitestSensorSampleRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
 
+struct Param {
+  uint16_t reset_steps;
+  uint16_t step_delay_us;
+  uint16_t wifi_ping_rate;
+  uint16_t stepper_wake_delay_ms;
+  uint16_t solenoid_surge_power;
+  uint16_t solenoid_surge_period_ms;
+  uint16_t solenoid_sustain_power;
+  uint16_t delay_between_sensor_readings_ms;
+  uint16_t sensor_params;
+  uint16_t reserved[12];
+  Param() {
+    reset_steps = 14000;
+    step_delay_us = 1200;
+    wifi_ping_rate = 100;
+    stepper_wake_delay_ms = 5;
+    solenoid_surge_power = 255;
+    solenoid_surge_period_ms = 300;
+    solenoid_sustain_power = 200;
+    delay_between_sensor_readings_ms = 500;
+    sensor_params = (TCS34725_GAIN_4X << 8) + TCS34725_INTEGRATIONTIME_700MS;
+  }
+};
+
 struct BrevitestSensorRecord {
-    char sensor_code;
-    uint8_t number;
     int start_time;
     uint16_t red_norm;
     uint16_t green_norm;
     uint16_t blue_norm;
 };
 
-struct BrevitestTestRecord{
-    uint16_t num;
+struct BrevitestTestRecord {
     int start_time;
     int finish_time;
-    char uuid[UUID_LENGTH];
-    uint8_t BCODE_version;
-    uint16_t BCODE_length;
-    uint8_t integration_time;
-    uint8_t gain;
+    char test_uuid[UUID_LENGTH];
+    char cartridge_uuid[UUID_LENGTH];
+    char assay_uuid[UUID_LENGTH];
     Param param;
     BrevitestSensorRecord sensor_reading_initial_assay;
     BrevitestSensorRecord sensor_reading_initial_control;
     BrevitestSensorRecord sensor_reading_final_assay;
     BrevitestSensorRecord sensor_reading_final_control;
-    char BCODE[BCODE_CAPACITY];
 } test_record;
-
-struct BrevitestStandardCurvePoint {
-    double x;
-    double y;
-};
-
-struct BrevitestStandardCurve {
-    uint16_t number_of_points;
-    BrevitestStandardCurvePoint point[ASSAY_STANDARD_CURVE_MAX_POINTS];
-}
 
 struct BrevitestAssayRecord {
     char id[UUID_LENGTH];
     char name[ASSAY_NAME_MAX_LENGTH];
-    double redMax;
-    double greenMax;
-    double greenMin;
-    double redMin;
-    BrevitestStandardCurve standardCurve;
-};
+    uint8_t BCODE_length;
+    uint8_t BCODE_version;
+    char BCODE[BCODE_CAPACITY];
+} test_assay;
+
+struct EEPROM {
+  uint8_t firmware_version;
+  uint8_t data_format_version;
+  char reserved[14];
+  char serial_number[SERIAL_NUMBER_LENGTH + 1];
+  Param default_param;
+  BrevitestAssayRecord assay_cache[ASSAY_CACHE_SIZE];
+  BrevitestTestRecord test_cache[TEST_CACHE_SIZE];
+} eeprom;

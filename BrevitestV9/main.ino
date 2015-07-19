@@ -259,48 +259,32 @@ int get_flash_test_address_by_uuid(char *uuid) {
     return -1;
 }
 
-int get_flash_test_record_count() {
-    int count;
-    flash->read(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-    count %= FLASH_RECORD_CAPACITY; // circular buffer
-    return count;
-}
+int get_eeprom_next_test_index() {
+    int i, oldest = 0;
 
-void write_test_record_to_flash() {
-    int test_addr;
-    // build test record
-    test_record.num = get_flash_test_record_count();
-
-    strncpy(test_record.uuid, test_uuid, UUID_LENGTH);
-    memcpy(&test_record.param, &brevitest, PARAM_TOTAL_LENGTH);
-    test_record.BCODE_version = 1;
-    test_record.BCODE_length = BCODE_length;
-
-    // write test record
-    test_addr = get_flash_test_address(test_record.num);
-    flash->write(&test_record, test_addr, TEST_RECORD_LENGTH);
-
-    // update record count
-    test_record.num++;
-    flash->write(&test_record.num, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-}
-
-void write_default_params() {
-    Param reset;
-    flash->write(&reset, 0, sizeof(reset));
-}
-
-void read_params() {
-    flash->read(&brevitest, 0, sizeof(brevitest));
-}
-
-void dump_params() {
-    int *ptr;
-
-    ptr = (int *) &brevitest;
-    for (int i = 0; i < PARAM_COUNT; i += 1) {
-        Serial.println(*ptr++);
+    for (i = 0; i < TEST_CACHE_SIZE; i++) {
+      if (eeprom.test_cache[i].start_time == -1) {
+        return i;
+      }
+      if (i == TEST_CACHE_SIZE - 1) {
+        if (eeprom.test_cache[i].start_time > eeprom.test_cache[0].start_time) {
+          return 0;
+        }
+      }
+      else {
+        if (eeprom.test_cache[i].start_time > eeprom.test_cache[i + 1].start_time) {
+          return i + 1;
+        }
+      }
     }
+}
+
+void write_test_record_to_eeprom() {
+    int index, test_addr;
+    // build test record
+    index = get_eeprom_next_test_index();
+    memcpy(&eeprom.test_record[index], &test_record, sizeof(test_record));
+    store_eeprom();
 }
 
 /////////////////////////////////////////////////////////////
@@ -349,27 +333,6 @@ int process_test_record(int addr) {
     return 0;
 }
 
-int get_test_record() {
-    // spark_request.param is num
-    int addr;
-
-    if (spark_request.index == 0) {  // initial request
-        test_num = atoi(spark_request.param);
-    }
-    else {  // continuation request
-        if (atoi(spark_request.param) != test_num) {
-            return -3;
-        }
-    }
-
-    addr = get_flash_test_address(test_num);
-    if (addr == -1) {
-      return -2;
-    }
-
-    return process_test_record(addr);
-}
-
 int get_test_record_by_uuid() {
     // spark_request.param is num
     int addr;
@@ -392,24 +355,28 @@ int get_test_record_by_uuid() {
 }
 
 int get_one_param() {
-    int value;
+    uint16_t *value = &eeprom.param.reset_steps;
 
     int num = extract_int_from_string(spark_request.param, 0, strlen(spark_request.param));
-    flash->read(&value, num, 4);
-    sprintf(spark_register, "%d", value);
+    if (num < 0) {
+      return -100;
+    }
+    if (num >= PARAM_COUNT) {
+      return -101;
+    }
+    value += num;
+    sprintf(spark_register, "%d", value*);
 
     return 0;
 }
 
 int get_all_params() {
-    int value, len;
-    int offset = 0;
-    int index = 0;
+    uint16_t *value = &eeprom.param.reset_steps;
+    int i, len, index = 0;
 
-    for (int i = 0; i < PARAM_TOTAL_LENGTH; i += 4) {
-        flash->read(&value, i + offset, 4);
-        len = sprintf(&spark_register[index], "%d,", value);
-        index += len;
+    for (i = 0; i < PARAM_COUNT; i += 1) {
+        value += i * 2;
+        index += sprintf(&spark_register[index], "%d,", value*);
     }
     spark_register[--index] = '\0';
 
@@ -453,8 +420,6 @@ int request_data(String msg) {
         switch (spark_request.code) {
             case 0: // serial_number
                 return get_serial_number();
-            case 1: // get test record
-                return get_test_record();
             case 2: // get test record
                 return get_test_record_by_uuid();
             case 3: // get params
@@ -477,11 +442,6 @@ int write_serial_number() {
     for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
         EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, spark_command.param[i]);
     }
-    return 1;
-}
-
-int initialize_device() {
-    init_device = !test_in_progress;
     return 1;
 }
 
@@ -511,60 +471,32 @@ int run_brevitest() {
     return 1;
 }
 
-int collect_sensor_samples() {
-    collect_sensor_data = true;
-    return 1;
-}
-
 int change_param() {
     int param_index;
-    int value;
+    uint16_t value;
+    uint16_t *param;
 
     param_index = extract_int_from_string(spark_command.param, 0, PARAM_CODE_LENGTH);
-    if (param_index >= PARAM_TOTAL_LENGTH) {
-        ERROR_MESSAGE("Parameter index out of range");
-        return -1;
+    if (param_index < 0) {
+        return -102;
     }
-    value = extract_int_from_string(spark_command.param, PARAM_CODE_LENGTH, strlen(spark_command.param));
-    flash->write(&value, param_index, 4);
-    read_params();
+    if (param_index >= PARAM_COUNT) {
+        return -103;
+    }
+    param = &eeprom.param.reset_steps + param_index;
+    param* = extract_int_from_string(spark_command.param, PARAM_CODE_LENGTH, strlen(spark_command.param));
+    store_params();
 
     return value;
 }
 
 int reset_params() {
-    write_default_params();
-    read_params();
+    Param reset;
+
+    memncpy(&eeprom, &reset, sizeof(Param));
+    store_params();
 
     return 1;
-}
-
-int erase_archived_data() {
-    Serial.println("Erasing archived data");
-    flash->eraseAll();
-    int count = 0;
-    flash->write(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-    reset_params();
-    return 1;
-}
-
-int dump_archive() {
-    int i, param_index;
-    char buf[64];
-
-    param_index = atoi(spark_command.param);
-    for (i = 0; i < param_index; i += 64) {
-        flash->read(buf, i, 64);
-        Serial.print(buf);
-    }
-    Serial.println();
-    return 1;
-}
-
-int get_archive_size() {
-    int count;
-    flash->read(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-    return count;
 }
 
 int get_firmware_version() {
@@ -665,34 +597,41 @@ int run_command(String msg) {
     parse_spark_command(msg);
 
     switch (spark_command.code) {
-        case 0: // write serial number
-            return write_serial_number();
-        case 1: // initialize device
-            return initialize_device();
-        case 2: // run test
+      // operating functions
+        case 1: // verify assay w QR scanner
+            return verify_assay();
+        case 2: // load assay record if not cached
+            return load_assay();
+        case 3: // run test
             return run_brevitest();
-        case 3: // collect sensor samples
-            return collect_sensor_samples();
-        case 4: // change device parameter
+        case 4: // cancel test
+            return cancel_brevitest();
+
+      // configuration functions
+        case 10: // set device serial number
+            return set_serial_number();
+        case 11: // change device parameter
             return change_param();
-        case 5: // reset device parameters to default
+        case 12: // reset device parameters to default
             return reset_params();
-        case 6: // factor reset
-            return erase_archived_data();
-        case 7: // dump archive to serial port
-            return dump_archive();
-        case 8: // dump archive to serial port
-            return get_archive_size();
-        case 9: // get current firmware version number
+        case 13: // get current firmware version number
             return get_firmware_version();
-        case 10: // cancel process
-            return cancel_current_process();
-        case 11: // receive BCODE string
-            return receive_BCODE();
-        case 12: // device ready
-            return (device_ready ? 1 : -1);
-        case 13: // set and move to calibration point
+        case 14: // set and move to calibration point
             return set_and_move_to_calibration_point();
+
+      // test functions
+        case 100:
+            return move_stage();
+        case 101:
+            return energize_solenoid();
+        case 102:
+            return turn_on_device_LED();
+        case 103:
+            return turn_off_device_LED();
+        case 104:
+            return blink_device_LED();
+        case 105:
+            return read_QR_code();
         default:
             return -1;
     }
@@ -921,72 +860,72 @@ int process_BCODE(int start_index) {
 
 /////////////////////////////////////////////////////////////
 //                                                         //
+//                         EEPROM                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+void load_eeprom() {
+  uint8_t *e = (uint8_t *) &eeprom;
+
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+    e* = EEPROM.read(addr);
+  }
+}
+
+void store_eeprom() {
+  uint8_t *e = (uint8_t *) &eeprom;
+
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+    EEPROM.write(addr, e*);
+  }
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
 //                          SETUP                          //
 //                                                         //
 /////////////////////////////////////////////////////////////
 
 void setup() {
-    int count;
+  Spark.function("runcommand", run_command);
+  Spark.function("requestdata", request_data);
+  Spark.variable("register", spark_register, STRING);
+  Spark.variable("status", spark_status, STRING);
+  Spark.variable("testrunning", test_uuid, STRING);
+  Spark.variable("percentdone", &test_percent_complete, INT);
 
-    Spark.function("runcommand", run_command);
-    Spark.function("requestdata", request_data);
-    Spark.variable("register", spark_register, STRING);
-    Spark.variable("status", spark_status, STRING);
-    Spark.variable("testrunning", test_uuid, STRING);
-    Spark.variable("percentdone", &test_percent_complete, INT);
+  pinMode(pinLimitSwitch, INPUT_PULLUP);
+  pinMode(pinSolenoid, OUTPUT);
+  pinMode(pinQRPower, OUTPUT);
+  pinMode(pinSensorLED, OUTPUT);
+  pinMode(pinDeviceLED, OUTPUT);
+  pinMode(pinStepperSleep, OUTPUT);
+  pinMode(pinStepperDir, OUTPUT);
+  pinMode(pinStepperStep, OUTPUT);
+  pinMode(pinAssaySDA, OUTPUT);
+  pinMode(pinAssaySCL, OUTPUT);
+  pinMode(pinControlSDA, OUTPUT);
+  pinMode(pinControlSCL, OUTPUT);
+  pinMode(pinQRTrigger, OUTPUT);
 
-    pinMode(pinSolenoid, OUTPUT);
-    pinMode(pinStepperStep, OUTPUT);
-    pinMode(pinStepperDir, OUTPUT);
-    pinMode(pinStepperSleep, OUTPUT);
-    pinMode(pinLimitSwitch, INPUT_PULLUP);
-    pinMode(pinSensorLED, OUTPUT);
-    pinMode(pinAssaySDA, OUTPUT);
-    pinMode(pinAssaySCL, OUTPUT);
-    pinMode(pinControlSDA, OUTPUT);
-    pinMode(pinControlSCL, OUTPUT);
-    pinMode(pinQRTrigger, OUTPUT);
+  digitalWrite(pinSolenoid, LOW);
+  digitalWrite(pinStepperSleep, LOW);
+  digitalWrite(pinQRTrigger, HIGH);
+  digitalWrite(pinQRPower, HIGH);
 
-    digitalWrite(pinSolenoid, LOW);
-    digitalWrite(pinStepperSleep, LOW);
-    digitalWrite(pinQRTrigger, HIGH);
-    digitalWrite(pinQRPower, HIGH);
+  Serial.begin(9600);     // standard serial port
+  Serial1.begin(115200);  // QR scanner interface through RX/TX pins
 
-    Serial.begin(9600);     // standard serial port
-    Serial1.begin(115200);  // QR scanner interface through RX/TX pins
-//    while (!Serial.available()) {
-//        Spark.process();
-//    }
+  load_eeprom();
 
-    if (EEPROM.read(0) != FIRMWARE_VERSION) {  // check for current firmware version
-        EEPROM.write(0, FIRMWARE_VERSION);
-    }
+  start_test = false;
+  test_in_progress = false;
+  cancel_process = false;
+  test_last_progress_update = millis();
 
-    flash = Devices::createWearLevelErase();
+  spark_register[0] = '\0';
 
-    read_params();
-
-    flash->read(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-    if (count == -1) { // brand new core
-        count = 0;
-        flash->write(&count, TEST_NUMBER_OF_RECORDS_ADDR, 4);
-        write_default_params();
-    }
-
-    device_ready = false;
-    init_device = false;
-    start_test = false;
-    test_in_progress = false;
-    collect_sensor_data = false;
-    cancel_process = false;
-    test_last_progress_update = millis();
-
-    BCODE_count = 0;
-    BCODE_length = 0;
-
-    spark_register[0] = '\0';
-
-    STATUS("Setup complete");
+  STATUS("Setup complete");
 }
 
 /////////////////////////////////////////////////////////////
@@ -995,26 +934,16 @@ void setup() {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-void do_initialize_device() {
-    STATUS("Initializing device");
+void do_run_test() {
+    start_test = false;
+    test_in_progress = true;
 
     analogWrite(pinSolenoid, 0);
     analogWrite(pinSensorLED, 0);
 
     move_to_calibration_point();
-
-    device_ready = true;
-    init_device = false;
-
-    STATUS("Device initialized and ready to run test");
-}
-
-void do_run_test() {
-    device_ready = false;
-    start_test = false;
-    test_in_progress = true;
-
     process_BCODE(0);
+    send_test_results();
 
     update_progress("Test complete", -1);
     test_uuid[0] = '\0';
@@ -1045,16 +974,8 @@ void do_sensor_data_collection() {
 }
 
 void loop(){
-    if (init_device) {
-        do_initialize_device();
-    }
-
-    if (device_ready && start_test && !test_in_progress) {
+    if (start_test && !test_in_progress) {
         do_run_test();
-    }
-
-    if (collect_sensor_data) {
-        do_sensor_data_collection();
     }
 
     if (cancel_process) {
