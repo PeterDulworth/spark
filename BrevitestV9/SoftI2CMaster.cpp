@@ -12,7 +12,20 @@
  *
  */
 
-#include "application.h"
+ #if defined(PLATFORM_ID)  //Only defined if a Particle device
+   #include "application.h"
+   STM32_Pin_Info* PIN_MAP = HAL_Pin_Map(); // Pointer required for highest access speed
+ #if (PLATFORM_ID == 0)  // Core
+   #define pinLO(_pin) (PIN_MAP[_pin].gpio_peripheral->BRR = PIN_MAP[_pin].gpio_pin)
+   #define pinHI(_pin) (PIN_MAP[_pin].gpio_peripheral->BSRR = PIN_MAP[_pin].gpio_pin)
+ #elif (PLATFORM_ID == 6) // Photon
+   #define pinLO(_pin) (PIN_MAP[_pin].gpio_peripheral->BSRRH = PIN_MAP[_pin].gpio_pin)
+   #define pinHI(_pin) (PIN_MAP[_pin].gpio_peripheral->BSRRL = PIN_MAP[_pin].gpio_pin)
+ #else
+   #error "*** PLATFORM_ID not supported by this library. PLATFORM should be Core or Photon ***"
+ #endif
+ #endif
+
 #include "SoftI2CMaster.h"
 
 #include <string.h>
@@ -21,7 +34,6 @@
 
 #define  I2C_ACK  0
 #define  I2C_NAK  1
-
 
 //
 // Constructor
@@ -154,8 +166,8 @@ uint8_t SoftI2CMaster::readLast()
 //
 void SoftI2CMaster::i2c_init(void)
 {
-    PIN_MAP[_sdaPin].gpio_peripheral->BSRR = PIN_MAP[_sdaPin].gpio_pin;
-    PIN_MAP[_sclPin].gpio_peripheral->BSRR = PIN_MAP[_sclPin].gpio_pin;
+    pinHI(_sdaPin);
+    pinHI(_sclPin);
     delayMicroseconds(i2cbitdelay);
 }
 
@@ -167,16 +179,16 @@ void SoftI2CMaster::i2c_start(void)
     //I2C_DDR &=~ (_BV( I2C_SDA ) | _BV( I2C_SCL ));
     //*_sclDirReg &=~ (_sdaBitMask | _sclBitMask);
 
-    PIN_MAP[_sdaPin].gpio_peripheral->BSRR = PIN_MAP[_sdaPin].gpio_pin;
+    pinHI(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BSRR = PIN_MAP[_sclPin].gpio_pin;
+    pinHI(_sclPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sdaPin].gpio_peripheral->BRR = PIN_MAP[_sdaPin].gpio_pin;
+    pinLO(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BRR = PIN_MAP[_sclPin].gpio_pin;
+    pinLO(_sclPin);
     delayMicroseconds(i2cbitdelay);
 }
 
@@ -184,13 +196,13 @@ void SoftI2CMaster::i2c_start(void)
 //
 void SoftI2CMaster::i2c_stop(void)
 {
-    PIN_MAP[_sdaPin].gpio_peripheral->BRR = PIN_MAP[_sdaPin].gpio_pin;
+    pinLO(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BSRR = PIN_MAP[_sclPin].gpio_pin;
+    pinHI(_sclPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sdaPin].gpio_peripheral->BSRR = PIN_MAP[_sdaPin].gpio_pin;
+    pinHI(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 }
 
@@ -199,16 +211,16 @@ void SoftI2CMaster::i2c_stop(void)
 void SoftI2CMaster::i2c_writebit( uint8_t c )
 {
     if ( c > 0 ) {
-        PIN_MAP[_sdaPin].gpio_peripheral->BSRR = PIN_MAP[_sdaPin].gpio_pin;
+        pinHI(_sdaPin);
     } else {
-        PIN_MAP[_sdaPin].gpio_peripheral->BRR = PIN_MAP[_sdaPin].gpio_pin;
+        pinLO(_sdaPin);
     }
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BSRR = PIN_MAP[_sclPin].gpio_pin;
+    pinHI(_sclPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BRR = PIN_MAP[_sclPin].gpio_pin;
+    pinLO(_sclPin);
     delayMicroseconds(i2cbitdelay);
 }
 
@@ -228,14 +240,14 @@ void SoftI2CMaster::i2c_write( uint8_t c )
 uint8_t SoftI2CMaster::i2c_readbit(void)
 {
 	  do {
-        PIN_MAP[_sclPin].gpio_peripheral->BSRR = PIN_MAP[_sclPin].gpio_pin;
+        pinHI(_sclPin);
     } while(digitalRead(_sclPin) == LOW);
     delayMicroseconds(i2cbitdelay);
 
     uint8_t c = digitalRead(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 
-    PIN_MAP[_sclPin].gpio_peripheral->BRR = PIN_MAP[_sclPin].gpio_pin;
+    pinLO(_sclPin);
     delayMicroseconds(i2cbitdelay);
 
     return (c > 0 ? 1 : 0);
@@ -246,7 +258,7 @@ uint8_t SoftI2CMaster::i2c_read(uint8_t ack)
     uint8_t res = 0;
 
     pinMode(_sdaPin, INPUT_PULLUP);
-    PIN_MAP[_sdaPin].gpio_peripheral->BSRR = PIN_MAP[_sdaPin].gpio_pin;
+    pinHI(_sdaPin);
     delayMicroseconds(i2cbitdelay);
 
     for ( uint8_t i=0;i<8;i++) {

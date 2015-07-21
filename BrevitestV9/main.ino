@@ -1,7 +1,5 @@
 #include "TCS34725.h"
 #include "SoftI2CMaster.h"
- #include "flashee-eeprom.h"
-    using namespace Flashee;
 
 #include "main.h"
 
@@ -31,10 +29,10 @@ void solenoid_energize(int duration) {
         return;
     }
 
-    analogWrite(pinSolenoid, brevitest.solenoid_surge_power);
-    delay(brevitest.solenoid_surge_period_ms);
-    analogWrite(pinSolenoid, brevitest.solenoid_sustain_power);
-    delay(duration - brevitest.solenoid_surge_period_ms);
+    analogWrite(pinSolenoid, eeprom.param.solenoid_surge_power);
+    delay(eeprom.param.solenoid_surge_period_ms);
+    analogWrite(pinSolenoid, eeprom.param.solenoid_sustain_power);
+    delay(duration - eeprom.param.solenoid_surge_period_ms);
     analogWrite(pinSolenoid, 0);
 }
 
@@ -62,7 +60,7 @@ void move_steps(long steps, int step_delay){
             break;
         }
 
-        if (i % brevitest.stepper_wifi_ping_rate == 0) {
+        if (i % eeprom.param.wifi_ping_rate == 0) {
             Spark.process();
         }
 
@@ -82,24 +80,18 @@ void sleep_stepper() {
 
 void wake_stepper() {
     digitalWrite(pinStepperSleep, HIGH);
-    delay(brevitest.stepper_wake_delay_ms);
+    delay(eeprom.param.stepper_wake_delay_ms);
 }
 
 void reset_stage() {
     STATUS("Resetting device");
-    move_steps(SPARK_RESET_STAGE_STEPS, brevitest.step_delay_us);
+    move_steps(-(long) eeprom.param.reset_steps, eeprom.param.step_delay_us);
 }
 
 void move_to_calibration_point() {
-    int calibration_steps;
-
-    calibration_steps = EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS);
-    calibration_steps <<= 8;
-    calibration_steps += EEPROM.read(EEPROM_ADDR_CALIBRATION_STEPS + 1);
-
     CANCELLABLE(reset_stage();)
     delay(500);
-    CANCELLABLE(move_steps(calibration_steps, brevitest.step_delay_us);)
+    CANCELLABLE(move_steps(eeprom.param.calibration_steps, eeprom.param.step_delay_us);)
 }
 
 /////////////////////////////////////////////////////////////
@@ -111,8 +103,8 @@ void move_to_calibration_point() {
 void init_sensor(TCS34725 *sensor, int sdaPin, int sclPin) {
     uint8_t it, gain;
 
-    it = ((int) brevitest.sensor_params) & 0x00FF;
-    gain = ((int) brevitest.sensor_params) >> 8;
+    it = ((int) eeprom.param.sensor_params) & 0x00FF;
+    gain = ((int) eeprom.param.sensor_params) >> 8;
     init_sensor_with_params(sensor, sdaPin, sclPin, it, gain);
 }
 
@@ -136,8 +128,6 @@ void read_one_sensor(TCS34725 *sensor, char sensor_code, int sample_number) {
     else {
         sample = &control_buffer[sample_number];
     }
-    sample->sensor_code = sensor_code;
-    sample->sample_number = sample_number;
     sample->sample_time = Time.now();
 
     Spark.process();
@@ -155,19 +145,19 @@ void convert_samples_to_reading(int reading_code, char sensor_code) {
     if (sensor_code == 'A') {
         buffer = assay_buffer;
         if (reading_code == 0) {
-            reading = &test_record.sensor_reading_initial_assay;
+            reading = &(test_record->sensor_reading_initial_assay);
         }
         else {
-            reading = &test_record.sensor_reading_final_assay;
+            reading = &(test_record->sensor_reading_final_assay);
         }
     }
     else {
         buffer = control_buffer;
         if (reading_code == 0) {
-            reading = &test_record.sensor_reading_initial_control;
+            reading = &(test_record->sensor_reading_initial_control);
         }
         else {
-            reading = &test_record.sensor_reading_final_control;
+            reading = &(test_record->sensor_reading_final_control);
         }
     }
 
@@ -198,8 +188,6 @@ void convert_samples_to_reading(int reading_code, char sensor_code) {
     reading->green_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
     reading->blue_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
 
-    reading->sensor_code = sensor_code;
-    reading->number = reading_code;
     reading->start_time = buffer[0].sample_time;
 }
 
@@ -210,12 +198,12 @@ void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
         }
         read_one_sensor(&tcsAssay, 'A', i);
         read_one_sensor(&tcsControl, 'C', i);
-        delay(SENSOR_DELAY_BETWEEN_SAMPLES);
+        delay(eeprom.param.delay_between_sensor_readings_ms);
         if (reading_code == 0) {
-            update_progress("Taking baseline readings", SENSOR_DELAY_BETWEEN_SAMPLES);
+            update_progress("Taking baseline readings", eeprom.param.delay_between_sensor_readings_ms);
         }
         else {
-            update_progress("Reading test results", SENSOR_DELAY_BETWEEN_SAMPLES);
+            update_progress("Reading test results", eeprom.param.delay_between_sensor_readings_ms);
         }
     }
 
@@ -225,66 +213,264 @@ void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
 
 /////////////////////////////////////////////////////////////
 //                                                         //
-//                    FLASH AND PARAMS                     //
+//                  EEPROM ASSAY RECORDS                   //
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int get_flash_test_address(int num) {
-    if (num <= get_flash_test_record_count()) {
-        return TEST_RECORD_START_ADDR + num * TEST_RECORD_LENGTH;
-    }
-    else {
-        return -1;
-    }
-}
+int get_assay_index_by_uuid(char *uuid) {
+    int i;
 
-int get_flash_test_address_by_uuid(char *uuid) {
-    int i, index;
-
-    int count = get_flash_test_record_count();
-    if (count <= 0) { // no records
-      return -1;
-    }
-    index = TEST_RECORD_START_ADDR + TEST_RECORD_UUID_OFFSET;
-    for (i = 0; i < count; i += 1) {
-        flash->read(test_record.uuid, index, UUID_LENGTH);
-
-        if (strncmp(uuid, test_record.uuid, UUID_LENGTH) == 0) {
-            index -= TEST_RECORD_UUID_OFFSET;
-            return index;
+    for (i = 0; i < ASSAY_CACHE_SIZE; i += 1) {
+        if (strncmp(uuid, eeprom.assay_cache[i].uuid, UUID_LENGTH) == 0) {
+            return i;
         }
-        index += TEST_RECORD_LENGTH;
     }
 
     return -1;
 }
 
-int get_eeprom_next_test_index() {
-    int i, oldest = 0;
+void write_assay_record_to_eeprom() {
+    store_assay(assay_index);
+}
 
-    for (i = 0; i < TEST_CACHE_SIZE; i++) {
-      if (eeprom.test_cache[i].start_time == -1) {
-        return i;
-      }
-      if (i == TEST_CACHE_SIZE - 1) {
-        if (eeprom.test_cache[i].start_time > eeprom.test_cache[0].start_time) {
-          return 0;
-        }
-      }
-      else {
-        if (eeprom.test_cache[i].start_time > eeprom.test_cache[i + 1].start_time) {
-          return i + 1;
-        }
-      }
+void store_assay(int index) {
+  uint8_t *e = (uint8_t *) &eeprom.assay_cache[index];
+
+  for (int addr = ASSAY_CACHE_INDEX; addr < (ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH); addr++, e++) {
+    EEPROM.write(addr, *e);
+  }
+
+  eeprom.cache_count = eeprom.cache_count & 0x0F + ((index + 1) % ASSAY_CACHE_SIZE) << 4;
+  EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
+}
+
+int get_assay_record_by_uuid() {
+    // particle_request.param is num
+    int index;
+
+    if (particle_request.index == 0) {  // initial request
+        strncpy(request_uuid, particle_request.uuid, UUID_LENGTH);
     }
+    else {  // continuation request
+        if (strncmp(particle_request.uuid, request_uuid, UUID_LENGTH) != 0) {
+            return -3;
+        }
+    }
+
+    index = get_assay_index_by_uuid(particle_request.uuid);
+    if (index == -1) {
+      return -2;
+    }
+
+    return process_assay_record(index);
+}
+
+int process_assay_record(int index) {
+    BrevitestAssayRecord *assay;
+    int len;
+
+    assay = &eeprom.assay_cache[index];
+
+    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%64s\t%3d\t%3d\n%s\n", \
+        assay->uuid, assay->name, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
+
+    particle_register[len] = '\0';
+    return 0;
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                  EEPROM TEST RECORDS                    //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int get_test_index_by_uuid(char *uuid) {
+    int i;
+
+    for (i = 0; i < TEST_CACHE_SIZE; i += 1) {
+        if (strncmp(uuid, eeprom.test_cache[i].test_uuid, UUID_LENGTH) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
 }
 
 void write_test_record_to_eeprom() {
-    int index, test_addr;
-    // build test record
-    index = get_eeprom_next_test_index();
-    memcpy(&eeprom.test_record[index], &test_record, sizeof(test_record));
-    store_eeprom();
+    store_test(test_index);
+}
+
+void store_test(int index) {
+  uint8_t *e = (uint8_t *) &eeprom.test_cache[index];
+
+  for (int addr = TEST_CACHE_INDEX; addr < (TEST_CACHE_INDEX + index * TEST_RECORD_LENGTH); addr++, e++) {
+    EEPROM.write(addr, *e);
+  }
+
+  eeprom.cache_count = eeprom.cache_count & 0xF0 + ((index + 1) % TEST_CACHE_SIZE);
+  EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
+}
+
+int get_test_record_by_uuid() {
+    // particle_request.param is num
+    int index;
+
+    if (particle_request.index == 0) {  // initial request
+        strncpy(request_uuid, particle_request.uuid, UUID_LENGTH);
+    }
+    else {  // continuation request
+        if (strncmp(particle_request.uuid, request_uuid, UUID_LENGTH) != 0) {
+            return -3;
+        }
+    }
+
+    index = get_test_index_by_uuid(particle_request.uuid);
+    if (index == -1) {
+      return -2;
+    }
+
+    return process_test_record(index);
+}
+
+int process_test_record(int index) {
+    BrevitestTestRecord *test;
+    int len;
+
+    test = &eeprom.test_cache[index];
+
+    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, \
+        "%11d\t%11d\t%24s\t%24s\t%24s\n%5d\t%5d\t%5d\t%5d\t%3d\t%3d\t%5d\t%5d\t%3d\t%3d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n", \
+        test->start_time, test->finish_time, test->test_uuid, test->cartridge_uuid, test->assay_uuid, \
+//
+        test->param.reset_steps, test->param.step_delay_us, test->param.wifi_ping_rate, test->param.stepper_wake_delay_ms, \
+        test->param.solenoid_surge_power, test->param.solenoid_sustain_power, test->param.solenoid_surge_period_ms, \
+        test->param.delay_between_sensor_readings_ms, test->param.sensor_params & 0x0F, test->param.sensor_params >> 8, test->param.calibration_steps, \
+//
+        test->sensor_reading_initial_assay.start_time, test->sensor_reading_initial_assay.red_norm, \
+        test->sensor_reading_initial_assay.green_norm, test->sensor_reading_initial_assay.blue_norm, \
+        test->sensor_reading_initial_control.start_time, test->sensor_reading_initial_control.red_norm, \
+        test->sensor_reading_initial_assay.green_norm, test->sensor_reading_initial_assay.blue_norm, \
+        test->sensor_reading_final_assay.start_time, test->sensor_reading_final_assay.red_norm, \
+        test->sensor_reading_initial_assay.green_norm, test->sensor_reading_initial_assay.blue_norm, \
+        test->sensor_reading_final_control.start_time, test->sensor_reading_final_control.red_norm, \
+        test->sensor_reading_initial_assay.green_norm, test->sensor_reading_initial_assay.blue_norm);
+
+    particle_register[len] = '\0';
+    return 0;
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                         PARAMS                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int get_param_value() {
+    int index, len;
+    uint16_t *value16 = &eeprom.param.reset_steps;
+    uint8_t *value8 = &eeprom.param.reset_steps;
+
+    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
+    if (index < 0) {
+      return -150;
+    }
+    if (index >= PARAM_BYTES) {
+      return -151;
+    }
+
+    len = extract_int_from_string(particle_request.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
+    if (len == 1) {
+        value8 += particle_request.index;
+        sprintf(particle_register, "%d", *value8);
+    }
+    else if (len == 2) {
+        if (particle_request.index % 2 == 0) {
+            value16 += particle_request.index;
+            sprintf(particle_register, "%d", *value16);
+        }
+        else {
+            return -147;
+        }
+    }
+    else {
+        return -148;
+    }
+
+    return 0;
+}
+
+int get_all_param_values() {
+    uint16_t *value = &eeprom.param.reset_steps;
+    int i, len, index = 0;
+
+    for (i = 0; i < PARAM_BYTES; i += 2) {
+        index += sprintf(&particle_register[index], "%d,", *value);
+    }
+    particle_register[--index] = '\0';
+
+    return 0;
+}
+
+int change_param() {
+    int index, len, value;
+    uint16_t *value16 = &eeprom.param.reset_steps;
+    uint8_t *value8 = &eeprom.param.reset_steps;
+
+    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
+    if (index < 0) {
+      return -110;
+    }
+    if (index >= PARAM_BYTES) {
+      return -111;
+    }
+
+    len = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
+    value = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX + PARAM_CHANGE_LENGTH, PARAM_CHANGE_VALUE);
+    if (len == 1) {
+        value8 += index;
+        *value8 = value;
+    }
+    else if (len == 2) {
+        if (index % 2 == 0) {
+            value16 += index;
+            *value16 = value;
+        }
+        else {
+            return -117;
+        }
+    }
+    else {
+        return -118;
+    }
+
+    store_params();
+
+    return value;
+}
+
+int reset_params() {
+    Param reset;
+
+    memcpy(&eeprom.param, &reset, PARAM_BYTES);
+    store_params();
+
+    return 1;
+}
+
+void load_params() {
+  uint8_t *e = (uint8_t *) &eeprom.param;
+
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+    *e = EEPROM.read(addr);
+  }
+}
+
+void store_params() {
+  uint8_t *e = (uint8_t *) &eeprom.param;
+
+  for (int addr = PARAM_INDEX; addr < (PARAM_INDEX + PARAM_BYTES); addr++, e++) {
+    EEPROM.write(addr, *e);
+  }
 }
 
 /////////////////////////////////////////////////////////////
@@ -294,138 +480,53 @@ void write_test_record_to_eeprom() {
 /////////////////////////////////////////////////////////////
 
 int get_serial_number() {
-    spark_register[SERIAL_NUMBER_LENGTH] = '\0';
-    for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
-        spark_register[i] = (char) EEPROM.read(EEPROM_ADDR_SERIAL_NUMBER + i);
-    }
+    memcpy(particle_register, eeprom.serial_number, EEPROM_SERIAL_NUMBER_LENGTH);
+    particle_register[EEPROM_SERIAL_NUMBER_LENGTH] = '\0';
     return 0;
 }
 
-int process_test_record(int addr) {
-    BrevitestSensorRecord *reading;
-    int finish, i, len, start;
-    int packet_max, num_readings, num_readings_per_packet, packet_num;
-
-    flash->read(&test_record, addr, TEST_RECORD_LENGTH);
-
-    len = snprintf(spark_register, SPARK_REGISTER_SIZE, \
-        "%3d\t%11d\t%11d\t%24s\t%3d\t%4d\t%3d\t%3d\n%5d\t%5d\t%5d\t%3d\t%5d\t%3d\t%11d\t%6d\t%3d\t%6d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n%c\t%2d\t%11d\t%5d\t%5d\t%5d\n", \
-        test_record.num, test_record.start_time, test_record.finish_time, test_record.uuid, test_record.BCODE_version, test_record.BCODE_length, \
-        test_record.integration_time, test_record.gain, \
-        test_record.param.step_delay_us, test_record.param.stepper_wifi_ping_rate, test_record.param.stepper_wake_delay_ms, \
-        test_record.param.solenoid_surge_power, test_record.param.solenoid_surge_period_ms, test_record.param.solenoid_sustain_power, \
-        test_record.param.sensor_params, test_record.param.sensor_ms_between_samples, test_record.param.sensor_led_power, \
-        test_record.param.sensor_led_warmup_ms, \
-        test_record.sensor_reading_initial_assay.sensor_code, test_record.sensor_reading_initial_assay.number, \
-        test_record.sensor_reading_initial_assay.start_time, test_record.sensor_reading_initial_assay.red_norm, \
-        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
-        test_record.sensor_reading_initial_control.sensor_code, test_record.sensor_reading_initial_control.number, \
-        test_record.sensor_reading_initial_control.start_time, test_record.sensor_reading_initial_control.red_norm, \
-        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
-        test_record.sensor_reading_final_assay.sensor_code, test_record.sensor_reading_final_assay.number, \
-        test_record.sensor_reading_final_assay.start_time, test_record.sensor_reading_final_assay.red_norm, \
-        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm, \
-        test_record.sensor_reading_final_control.sensor_code, test_record.sensor_reading_final_control.number, \
-        test_record.sensor_reading_final_control.start_time, test_record.sensor_reading_final_control.red_norm, \
-        test_record.sensor_reading_initial_assay.green_norm, test_record.sensor_reading_initial_assay.blue_norm);
-
-    spark_register[len] = '\0';
-    return 0;
-}
-
-int get_test_record_by_uuid() {
-    // spark_request.param is num
-    int addr;
-
-    if (spark_request.index == 0) {  // initial request
-        strncpy(test_record.uuid, spark_request.uuid, UUID_LENGTH);
-    }
-    else {  // continuation request
-        if (strncmp(spark_request.uuid, test_record.uuid, UUID_LENGTH) != 0) {
-            return -3;
-        }
-    }
-
-    addr = get_flash_test_address_by_uuid(spark_request.uuid);
-    if (addr == -1) {
-      return -2;
-    }
-
-    return process_test_record(addr);
-}
-
-int get_one_param() {
-    uint16_t *value = &eeprom.param.reset_steps;
-
-    int num = extract_int_from_string(spark_request.param, 0, strlen(spark_request.param));
-    if (num < 0) {
-      return -100;
-    }
-    if (num >= PARAM_COUNT) {
-      return -101;
-    }
-    value += num;
-    sprintf(spark_register, "%d", value*);
-
-    return 0;
-}
-
-int get_all_params() {
-    uint16_t *value = &eeprom.param.reset_steps;
-    int i, len, index = 0;
-
-    for (i = 0; i < PARAM_COUNT; i += 1) {
-        value += i * 2;
-        index += sprintf(&spark_register[index], "%d,", value*);
-    }
-    spark_register[--index] = '\0';
-
-    return 0;
-}
-
-//
-//
-
-int parse_spark_request(String msg) {
+int parse_particle_request(String msg) {
     int len = msg.length();
     int param_length = len - REQUEST_PARAM_INDEX;
 
-    msg.toCharArray(spark_request.arg, len + 1);
+    msg.toCharArray(particle_request.arg, len + 1);
 
-    spark_request.index = extract_int_from_string(spark_request.arg, REQUEST_INDEX_INDEX, REQUEST_INDEX_LENGTH);
-    if (spark_request.index == 0) { // first request
-        strncpy(spark_request.uuid, spark_request.arg, UUID_LENGTH);
-        spark_request.uuid[UUID_LENGTH] = '\0';
+    particle_request.index = extract_int_from_string(particle_request.arg, REQUEST_INDEX_INDEX, REQUEST_INDEX_LENGTH);
+    if (particle_request.index == 0) { // first request
+        strncpy(particle_request.uuid, particle_request.arg, UUID_LENGTH);
+        particle_request.uuid[UUID_LENGTH] = '\0';
     }
     else {
-        if (strncmp(spark_request.arg, spark_request.uuid, UUID_LENGTH) != 0) {
+        if (strncmp(particle_request.arg, particle_request.uuid, UUID_LENGTH) != 0) {
             ERROR_MESSAGE("Register uuid mismatch");
             return -1;
         }
-        if (spark_request.index == 999999) {
-            spark_register[0] = '\0';
+        if (particle_request.index == 999999) {
+            particle_register[0] = '\0';
             return 0;
         }
     }
 
-    spark_request.code = extract_int_from_string(spark_request.arg, REQUEST_CODE_INDEX, REQUEST_CODE_LENGTH);
-    strncpy(spark_request.param, &spark_request.arg[REQUEST_PARAM_INDEX], param_length);
-    spark_request.param[param_length] = '\0';
+    particle_request.code = extract_int_from_string(particle_request.arg, REQUEST_CODE_INDEX, REQUEST_CODE_LENGTH);
+    strncpy(particle_request.param, &particle_request.arg[REQUEST_PARAM_INDEX], param_length);
+    particle_request.param[param_length] = '\0';
 
     return 1;
 }
 
 int request_data(String msg) {
-    if (parse_spark_request(msg) > 0) {
-        switch (spark_request.code) {
+    if (parse_particle_request(msg) > 0) {
+        switch (particle_request.code) {
             case 0: // serial_number
                 return get_serial_number();
-            case 2: // get test record
+            case 1: // get test record
                 return get_test_record_by_uuid();
+            case 2: // get assay record
+                return get_assay_record_by_uuid();
             case 3: // get params
-                return get_all_params();
+                return get_all_param_values();
             case 4: // one parameter
-                return get_one_param();
+                return get_param_value();
         }
     }
 
@@ -438,63 +539,56 @@ int request_data(String msg) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int write_serial_number() {
-    for (int i = 0; i < SERIAL_NUMBER_LENGTH; i += 1) {
-        EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, spark_command.param[i]);
+int store_serial_number() {
+    for (int i = 0; i < EEPROM_SERIAL_NUMBER_LENGTH; i += 1) {
+        EEPROM.write(EEPROM_SERIAL_NUMBER_INDEX + i, particle_command.param[i]);
     }
     return 1;
+}
+
+int scan_QR_code() {
+    // param: user_uuid
+    if (memcmp(user_uuid, &particle_command.param, UUID_LENGTH) != 0) {
+        return -201;
+    }
+
+    // scan QR code
+    // load QR code into particle register
+    // send QR code to cloud for cartridge verification
+    return 0;
+}
+
+int claim_device() {
+    // param: user_uuid, assay_uuid
+    if (device_busy) {
+        return -200;
+    }
+
+    device_busy = true;
+    memcpy(user_uuid, &particle_command.param, UUID_LENGTH);
+    assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
+    if (assay_index == -1) {
+        return 1;   // assay not cached; load assay from cloud
+    }
+    else {
+        return 0;    // assay found in cache
+    }
+}
+
+int release_device() {
+    user_uuid[0] = '\0';
+    assay_index = -1;
+    device_busy = false;
 }
 
 int run_brevitest() {
-    if (!device_ready) {
-        ERROR_MESSAGE(-10);
-        return -1;
-    }
-    if (test_in_progress) {
+    if (device_busy) {
         ERROR_MESSAGE(-11);
         return -1;
     }
-    if (BCODE_length == 0) {
-        ERROR_MESSAGE(-12);
-        return -1;
-    }
-    if (memcmp(BCODE_uuid, &spark_command.param, UUID_LENGTH) != 0) {
-        ERROR_MESSAGE(-13);
-        return -1;
-    }
 
-    strncpy(test_uuid, spark_command.param, UUID_LENGTH);
-    test_uuid[UUID_LENGTH] = '\0';
-    test_duration = 1000 * extract_int_from_string(spark_command.param, UUID_LENGTH, TEST_DURATION_LENGTH);
     start_test = true;
     update_progress("Starting test", 0);
-    return 1;
-}
-
-int change_param() {
-    int param_index;
-    uint16_t value;
-    uint16_t *param;
-
-    param_index = extract_int_from_string(spark_command.param, 0, PARAM_CODE_LENGTH);
-    if (param_index < 0) {
-        return -102;
-    }
-    if (param_index >= PARAM_COUNT) {
-        return -103;
-    }
-    param = &eeprom.param.reset_steps + param_index;
-    param* = extract_int_from_string(spark_command.param, PARAM_CODE_LENGTH, strlen(spark_command.param));
-    store_params();
-
-    return value;
-}
-
-int reset_params() {
-    Param reset;
-
-    memncpy(&eeprom, &reset, sizeof(Param));
-    store_params();
 
     return 1;
 }
@@ -504,7 +598,7 @@ int get_firmware_version() {
     return version;
 }
 
-int cancel_current_process() {
+int cancel_brevitest() {
     cancel_process = true;
     return 1;
 }
@@ -514,33 +608,33 @@ int receive_BCODE() {
 
     STATUS("Receiving BCODE");
 
-    num = extract_int_from_string(spark_command.param, 0, BCODE_NUM_LENGTH);
+    num = extract_int_from_string(particle_command.param, 0, BCODE_NUM_LENGTH);
     if (BCODE_count != num) {
         ERROR_MESSAGE("BCODE index mismatch");
-        ERROR_MESSAGE(spark_command.param);
+        ERROR_MESSAGE(particle_command.param);
         BCODE_length = 0;
         return -1;
     }
     if (num == 0) { // first packet, contains number of packets (not including this packet)
-        BCODE_packets = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
-        memcpy(BCODE_uuid, &spark_command.param[BCODE_UUID_INDEX], UUID_LENGTH);
+        BCODE_packets = extract_int_from_string(particle_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
+        memcpy(BCODE_uuid, &particle_command.param[BCODE_UUID_INDEX], UUID_LENGTH);
         BCODE_index = 0;
         BCODE_length = 0;
     }
     else { // payload packet, contains payload count, packet length, uuid, and payload
         if (num <= BCODE_packets) {
-            if (memcmp(BCODE_uuid, &spark_command.param[BCODE_UUID_INDEX], UUID_LENGTH) != 0) {
+            if (memcmp(BCODE_uuid, &particle_command.param[BCODE_UUID_INDEX], UUID_LENGTH) != 0) {
                 ERROR_MESSAGE(-20);
                 BCODE_length = 0;
                 return -1;
             }
-            BCODE_length = extract_int_from_string(spark_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
+            BCODE_length = extract_int_from_string(particle_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
             if ((BCODE_index + BCODE_length) > BCODE_CAPACITY) {
                 ERROR_MESSAGE(-21);
                 BCODE_length = 0;
                 return -1;
             }
-            memcpy(&test_record.BCODE[BCODE_index], &spark_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
+            memcpy(&test_record.BCODE[BCODE_index], &particle_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
             BCODE_index += BCODE_length;
         }
         else {
@@ -568,10 +662,10 @@ int set_and_move_to_calibration_point() {
     int calibration_steps;
     uint8_t lsb, msb;
 
-    calibration_steps = extract_int_from_string(spark_command.param, 0, PARAM_CODE_LENGTH);
+    eeprom.param.calibration_steps = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
 
-    msb = (uint8_t) (calibration_steps >> 8);
-    lsb = (uint8_t) (calibration_steps & 0x0F);
+    msb = (uint8_t) (eeprom.param.calibration_steps >> 8);
+    lsb = (uint8_t) (eeprom.param.calibration_steps & 0x0F);
     EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS, msb);
     EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS + 1, lsb);
 
@@ -583,20 +677,20 @@ int set_and_move_to_calibration_point() {
 //
 //
 
-void parse_spark_command(String msg) {
+void parse_particle_command(String msg) {
     int len = msg.length();
-    msg.toCharArray(spark_command.arg, len + 1);
+    msg.toCharArray(particle_command.arg, len + 1);
 
-    spark_command.code = extract_int_from_string(spark_command.arg, 0, COMMAND_CODE_LENGTH);
+    particle_command.code = extract_int_from_string(particle_command.arg, 0, PARTICLE_COMMAND_CODE_LENGTH);
     len -= COMMAND_CODE_LENGTH;
-    strncpy(spark_command.param, &spark_command.arg[COMMAND_CODE_LENGTH], len);
-    spark_command.param[len] = '\0';
+    strncpy(particle_command.param, &particle_command.arg[PARTICLE_COMMAND_CODE_LENGTH], len);
+    particle_command.param[len] = '\0';
 }
 
 int run_command(String msg) {
-    parse_spark_command(msg);
+    parse_particle_command(msg);
 
-    switch (spark_command.code) {
+    switch (particle_command.code) {
       // operating functions
         case 1: // verify assay w QR scanner
             return verify_assay();
@@ -696,12 +790,12 @@ void update_progress(char *message, int duration) {
         }
 
         STATUS("%s\n%s\n%d", message, test_uuid, test_percent_complete);
-        Serial.println(spark_status);
+        Serial.println(particle_status);
         if (now - test_last_progress_update < 1000) {
             return;
         }
         else {
-            Spark.publish(test_uuid, spark_status, 60, PRIVATE);
+            Spark.publish(test_uuid, particle_status, 60, PRIVATE);
             test_last_progress_update = now;
         }
     }
@@ -725,7 +819,6 @@ int process_one_BCODE_command(int cmd, int index) {
             test_record.gain =  param1>>8;
             init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, test_record.integration_time, test_record.gain);
             init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, test_record.integration_time, test_record.gain);
-            test_sensor_reading_count = 0;
 
             update_progress("Warming up sensor LEDs", 1000);
             analogWrite(pinSensorLED, param2);
@@ -819,7 +912,6 @@ int process_one_BCODE_command(int cmd, int index) {
             test_record.gain =  param2;
             init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, test_record.integration_time, test_record.gain);
             init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, test_record.integration_time, test_record.gain);
-            test_sensor_reading_count = 0;
             break;
         case 15: // Disable sensor
             tcsAssay.disable();
@@ -827,7 +919,7 @@ int process_one_BCODE_command(int cmd, int index) {
             break;
         case 99: // Finish test
             test_record.finish_time = Time.now();
-            write_test_record_to_flash();
+            write_test_record_to_eeprom();
             reset_stage();
             break;
     }
@@ -889,8 +981,8 @@ void store_eeprom() {
 void setup() {
   Spark.function("runcommand", run_command);
   Spark.function("requestdata", request_data);
-  Spark.variable("register", spark_register, STRING);
-  Spark.variable("status", spark_status, STRING);
+  Spark.variable("register", particle_register, STRING);
+  Spark.variable("status", particle_status, STRING);
   Spark.variable("testrunning", test_uuid, STRING);
   Spark.variable("percentdone", &test_percent_complete, INT);
 
@@ -918,12 +1010,16 @@ void setup() {
 
   load_eeprom();
 
+  device_busy = false;
   start_test = false;
   test_in_progress = false;
   cancel_process = false;
   test_last_progress_update = millis();
 
-  spark_register[0] = '\0';
+  particle_register[0] = '\0';
+
+  test_index = -1;
+  assay_index = -1;
 
   STATUS("Setup complete");
 }
@@ -941,27 +1037,30 @@ void do_run_test() {
     analogWrite(pinSolenoid, 0);
     analogWrite(pinSensorLED, 0);
 
+    test_index = eeprom.cache_count & 0x0F;
+
     move_to_calibration_point();
     process_BCODE(0);
-    send_test_results();
 
     update_progress("Test complete", -1);
-    test_uuid[0] = '\0';
+
+    test_index = -1;
     test_in_progress = false;
+
+    release_device();
 }
 
 void do_sensor_data_collection() {
     STATUS("Initializing sensors");
     init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
     init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
-    analogWrite(pinSensorLED, brevitest.sensor_led_power);
+    /*analogWrite(pinSensorLED, brevitest.sensor_led_power);*/
 
     STATUS("Warming up sensor LEDs");
-    delay(brevitest.sensor_led_warmup_ms);
+    /*delay(brevitest.sensor_led_warmup_ms);*/
 
     STATUS("Collecting sensor data");
     test_record.start_time = Time.now();
-    test_sensor_reading_count = 0;
     CANCELLABLE(read_sensors(1);)
     test_record.finish_time = Time.now();
     CANCELLABLE(write_test_record_to_flash();)
