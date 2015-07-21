@@ -22,7 +22,7 @@ int extract_int_from_string(char *str, int pos, int len) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-void solenoid_energize(int duration) {
+void move_solenoid(int duration) {
     Spark.process();
 
     if (cancel_process) {
@@ -145,19 +145,19 @@ void convert_samples_to_reading(int reading_code, char sensor_code) {
     if (sensor_code == 'A') {
         buffer = assay_buffer;
         if (reading_code == 0) {
-            reading = &(test_record->sensor_reading_initial_assay);
+            reading = &(eeprom.test_cache[test_index].sensor_reading_initial_assay);
         }
         else {
-            reading = &(test_record->sensor_reading_final_assay);
+            reading = &(eeprom.test_cache[test_index].sensor_reading_final_assay);
         }
     }
     else {
         buffer = control_buffer;
         if (reading_code == 0) {
-            reading = &(test_record->sensor_reading_initial_control);
+            reading = &(eeprom.test_cache[test_index].sensor_reading_initial_control);
         }
         else {
-            reading = &(test_record->sensor_reading_final_control);
+            reading = &(eeprom.test_cache[test_index].sensor_reading_final_control);
         }
     }
 
@@ -368,13 +368,13 @@ int process_test_record(int index) {
 int get_param_value() {
     int index, len;
     uint16_t *value16 = &eeprom.param.reset_steps;
-    uint8_t *value8 = &eeprom.param.reset_steps;
+    uint8_t *value8 = (uint8_t *) &eeprom.param.reset_steps;
 
     index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
     if (index < 0) {
       return -150;
     }
-    if (index >= PARAM_BYTES) {
+    if (index >= EEPROM_PARAM_LENGTH) {
       return -151;
     }
 
@@ -403,7 +403,7 @@ int get_all_param_values() {
     uint16_t *value = &eeprom.param.reset_steps;
     int i, len, index = 0;
 
-    for (i = 0; i < PARAM_BYTES; i += 2) {
+    for (i = 0; i < EEPROM_PARAM_LENGTH; i += 2) {
         index += sprintf(&particle_register[index], "%d,", *value);
     }
     particle_register[--index] = '\0';
@@ -414,13 +414,13 @@ int get_all_param_values() {
 int change_param() {
     int index, len, value;
     uint16_t *value16 = &eeprom.param.reset_steps;
-    uint8_t *value8 = &eeprom.param.reset_steps;
+    uint8_t *value8 = (uint8_t *) &eeprom.param.reset_steps;
 
     index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
     if (index < 0) {
       return -110;
     }
-    if (index >= PARAM_BYTES) {
+    if (index >= EEPROM_PARAM_LENGTH) {
       return -111;
     }
 
@@ -451,7 +451,7 @@ int change_param() {
 int reset_params() {
     Param reset;
 
-    memcpy(&eeprom.param, &reset, PARAM_BYTES);
+    memcpy(&eeprom.param, &reset, EEPROM_PARAM_LENGTH);
     store_params();
 
     return 1;
@@ -468,7 +468,7 @@ void load_params() {
 void store_params() {
   uint8_t *e = (uint8_t *) &eeprom.param;
 
-  for (int addr = PARAM_INDEX; addr < (PARAM_INDEX + PARAM_BYTES); addr++, e++) {
+  for (int addr = EEPROM_ADDR_PARAM; addr < (EEPROM_ADDR_PARAM + EEPROM_PARAM_LENGTH); addr++, e++) {
     EEPROM.write(addr, *e);
   }
 }
@@ -539,9 +539,10 @@ int request_data(String msg) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int store_serial_number() {
+int write_serial_number() {
     for (int i = 0; i < EEPROM_SERIAL_NUMBER_LENGTH; i += 1) {
-        EEPROM.write(EEPROM_SERIAL_NUMBER_INDEX + i, particle_command.param[i]);
+        eeprom.serial_number[i] = particle_command.param[i];
+        EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, particle_command.param[i]);
     }
     return 1;
 }
@@ -634,7 +635,7 @@ int receive_BCODE() {
                 BCODE_length = 0;
                 return -1;
             }
-            memcpy(&test_record.BCODE[BCODE_index], &particle_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
+            memcpy(&eeprom.assay_cache[assay_index].BCODE[BCODE_index], &particle_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
             BCODE_index += BCODE_length;
         }
         else {
@@ -649,7 +650,7 @@ int receive_BCODE() {
     }
     else { // last packet
         BCODE_length = BCODE_index;
-        test_record.BCODE[BCODE_length] = '\0';
+        eeprom.assay_cache[assay_index].BCODE[BCODE_length] = '\0';
         BCODE_count = 0;
         BCODE_packets = 0;
         BCODE_index = 0;
@@ -666,12 +667,44 @@ int set_and_move_to_calibration_point() {
 
     msb = (uint8_t) (eeprom.param.calibration_steps >> 8);
     lsb = (uint8_t) (eeprom.param.calibration_steps & 0x0F);
-    EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS, msb);
-    EEPROM.write(EEPROM_ADDR_CALIBRATION_STEPS + 1, lsb);
+    EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_PARAM_OFFSET_CALIBRATION_STEPS, msb);
+    EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_PARAM_OFFSET_CALIBRATION_STEPS + 1, lsb);
 
     move_to_calibration_point();
 
     return 1;
+}
+
+int move_stage() {
+  int steps = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
+  move_steps(steps, eeprom.param.step_delay_us);
+  return 1;
+}
+
+int energize_solenoid() {
+  int duration = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
+  move_solenoid(duration);
+  return 1;
+}
+
+int turn_on_device_LED() {
+  analogWrite(pinDeviceLED, 255);
+  return 1;
+}
+
+int turn_off_device_LED() {
+  analogWrite(pinDeviceLED, 0);
+  return 1;
+}
+
+int blink_device_LED() {
+  device_LED_blink_timeout = Time.now() + extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
+  device_LED_blinking = true;
+  return 1;
+}
+
+int read_QR_code() {
+  return 1;
 }
 
 //
@@ -682,7 +715,7 @@ void parse_particle_command(String msg) {
     msg.toCharArray(particle_command.arg, len + 1);
 
     particle_command.code = extract_int_from_string(particle_command.arg, 0, PARTICLE_COMMAND_CODE_LENGTH);
-    len -= COMMAND_CODE_LENGTH;
+    len -= PARTICLE_COMMAND_CODE_LENGTH;
     strncpy(particle_command.param, &particle_command.arg[PARTICLE_COMMAND_CODE_LENGTH], len);
     particle_command.param[len] = '\0';
 }
@@ -692,18 +725,14 @@ int run_command(String msg) {
 
     switch (particle_command.code) {
       // operating functions
-        case 1: // verify assay w QR scanner
-            return verify_assay();
-        case 2: // load assay record if not cached
-            return load_assay();
-        case 3: // run test
+        case 1: // run test
             return run_brevitest();
-        case 4: // cancel test
+        case 2: // cancel test
             return cancel_brevitest();
 
       // configuration functions
         case 10: // set device serial number
-            return set_serial_number();
+            return write_serial_number();
         case 11: // change device parameter
             return change_param();
         case 12: // reset device parameters to default
@@ -740,28 +769,29 @@ int run_command(String msg) {
 
 int get_BCODE_token(int index, int *token) {
     int i;
+    char *bcode = eeprom.assay_cache[assay_index].BCODE;
 
     if (cancel_process) {
         return index;
     }
 
-    if (test_record.BCODE[index] == '\0') { // end of string
+    if (bcode[index] == '\0') { // end of string
         return index; // return end of string location
     }
 
-    if (test_record.BCODE[index] == '\n') { // command has no parameter
+    if (bcode[index] == '\n') { // command has no parameter
         return index + 1; // skip past parameter
     }
 
     // there is a parameter to extract
     i = index;
     while (i < BCODE_CAPACITY) {
-        if (test_record.BCODE[i] == '\0') {
-            *token = extract_int_from_string(test_record.BCODE, index, (i - index));
+        if (bcode[i] == '\0') {
+            *token = extract_int_from_string(bcode, index, (i - index));
             return i; // return end of string location
         }
-        if ((test_record.BCODE[i] == '\n') || (test_record.BCODE[i] == ',')) {
-            *token = extract_int_from_string(test_record.BCODE, index, (i - index));
+        if ((bcode[i] == '\n') || (bcode[i] == ',')) {
+            *token = extract_int_from_string(bcode, index, (i - index));
             i++; // skip past parameter
             return i;
         }
@@ -774,6 +804,8 @@ int get_BCODE_token(int index, int *token) {
 
 void update_progress(char *message, int duration) {
     unsigned long now = millis();
+    int test_duration = eeprom.assay_cache[assay_index].duration;
+    char *test_uuid = eeprom.test_cache[test_index].test_uuid;
 
     if (!cancel_process) {
         if (duration == 0) {
@@ -803,6 +835,7 @@ void update_progress(char *message, int duration) {
 
 int process_one_BCODE_command(int cmd, int index) {
     int buf, i, param1, param2, start_index, timeout;
+    BrevitestTestRecord *test_record = &eeprom.test_cache[test_index];
     uint8_t integration_time, gain;
 
     if (cancel_process) {
@@ -811,14 +844,15 @@ int process_one_BCODE_command(int cmd, int index) {
 
     switch(cmd) {
         case 0: // Start test(integration time+gain, LED power)
-            test_record.start_time = Time.now();
+            test_record->start_time = Time.now();
             index = get_BCODE_token(index, &param1);
             index = get_BCODE_token(index, &param2);
 
-            test_record.integration_time =  param1 & 0x00FF;
-            test_record.gain =  param1>>8;
-            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, test_record.integration_time, test_record.gain);
-            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, test_record.integration_time, test_record.gain);
+            test_record->param.sensor_params = param1;
+            integration_time =  param1 & 0x00FF;
+            gain =  param1 >> 8;
+            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, integration_time, gain);
+            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, integration_time, gain);
 
             update_progress("Warming up sensor LEDs", 1000);
             analogWrite(pinSensorLED, param2);
@@ -840,7 +874,7 @@ int process_one_BCODE_command(int cmd, int index) {
         case 3: // Solenoid on(milliseconds)
             index = get_BCODE_token(index, &param1);
             update_progress("Rastering magnets", param1);
-            solenoid_energize(param1);
+            move_solenoid(param1);
             break;
         case 4: // Device LED on
             analogWrite(pinDeviceLED, 255);
@@ -878,11 +912,11 @@ int process_one_BCODE_command(int cmd, int index) {
                     return -1;
                 }
                 Spark.process();
-            }
+            };
             i = 0;
             do {
                 buf = Serial1.read();
-                if (buf == -1 || test_uuid[i++] != (char) buf);
+                if (buf == -1 || test_record->cartridge_uuid[i++] != (char) buf) {
                     return -1;
                 }
             } while (i < UUID_LENGTH);
@@ -908,17 +942,18 @@ int process_one_BCODE_command(int cmd, int index) {
             index = get_BCODE_token(index, &param1);
             index = get_BCODE_token(index, &param2);
 
-            test_record.integration_time =  param1;
-            test_record.gain =  param2;
-            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, test_record.integration_time, test_record.gain);
-            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, test_record.integration_time, test_record.gain);
+            integration_time =  param1;
+            gain =  param2;
+            test_record->param.sensor_params = (gain << 8) + integration_time;
+            init_sensor_with_params(&tcsAssay, pinAssaySDA, pinAssaySCL, integration_time, gain);
+            init_sensor_with_params(&tcsControl, pinControlSDA, pinControlSCL, integration_time, gain);
             break;
         case 15: // Disable sensor
             tcsAssay.disable();
             tcsControl.disable();
             break;
         case 99: // Finish test
-            test_record.finish_time = Time.now();
+            test_record->finish_time = Time.now();
             write_test_record_to_eeprom();
             reset_stage();
             break;
@@ -960,7 +995,7 @@ void load_eeprom() {
   uint8_t *e = (uint8_t *) &eeprom;
 
   for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
-    e* = EEPROM.read(addr);
+    *e = EEPROM.read(addr);
   }
 }
 
@@ -968,7 +1003,7 @@ void store_eeprom() {
   uint8_t *e = (uint8_t *) &eeprom;
 
   for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
-    EEPROM.write(addr, e*);
+    EEPROM.write(addr, *e);
   }
 }
 
@@ -983,7 +1018,6 @@ void setup() {
   Spark.function("requestdata", request_data);
   Spark.variable("register", particle_register, STRING);
   Spark.variable("status", particle_status, STRING);
-  Spark.variable("testrunning", test_uuid, STRING);
   Spark.variable("percentdone", &test_percent_complete, INT);
 
   pinMode(pinLimitSwitch, INPUT_PULLUP);
@@ -1050,34 +1084,31 @@ void do_run_test() {
     release_device();
 }
 
-void do_sensor_data_collection() {
-    STATUS("Initializing sensors");
-    init_sensor(&tcsAssay, pinAssaySDA, pinAssaySCL);
-    init_sensor(&tcsControl, pinControlSDA, pinControlSCL);
-    /*analogWrite(pinSensorLED, brevitest.sensor_led_power);*/
-
-    STATUS("Warming up sensor LEDs");
-    /*delay(brevitest.sensor_led_warmup_ms);*/
-
-    STATUS("Collecting sensor data");
-    test_record.start_time = Time.now();
-    CANCELLABLE(read_sensors(1);)
-    test_record.finish_time = Time.now();
-    CANCELLABLE(write_test_record_to_flash();)
-
-    analogWrite(pinSensorLED, 0);
-    tcsAssay.disable();
-    tcsControl.disable();
-    collect_sensor_data = false;
-    STATUS("Sensor data collection complete");
-}
-
 void loop(){
+    unsigned long now;
+
     if (start_test && !test_in_progress) {
         do_run_test();
     }
 
     if (cancel_process) {
         cancel_process = false;
+    }
+
+    if (device_LED_blinking) {
+      now = Time.now();
+      if (now > device_LED_change_time) { // change LED state and reset blink timer
+        if (device_LED_blink_on) {
+          turn_off_device_LED();
+        }
+        else {
+          turn_on_device_LED();
+        }
+        device_LED_blink_on = !device_LED_blink_on;
+        device_LED_change_time = now + DEVICE_LED_BLINK_DELAY;
+      }
+      if (now > device_LED_blink_timeout) {
+        device_LED_blinking = false;
+      }
     }
 }

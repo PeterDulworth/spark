@@ -11,9 +11,26 @@
 #define CANCELLABLE(x) if (!cancel_process) {x}
 
 // eeprom
-#define EEPROM_SERIAL_NUMBER_INDEX 8
+#define EEPROM_ADDR_FIRMWARE_VERSION 0
+#define EEPROM_ADDR_DATA_FORMAT_VERSION 1
+#define EEPROM_ADDR_CACHE_COUNT 2
+#define EEPROM_ADDR_SERIAL_NUMBER 8
 #define EEPROM_SERIAL_NUMBER_LENGTH 19
-#define EEPROM_ADDR_CALIBRATION_STEPS 16
+#define EEPROM_ADDR_PARAM 28
+#define EEPROM_PARAM_LENGTH 18
+#define EEPROM_PARAM_COUNT 10
+#define EEPROM_PARAM_OFFSET_RESET_STEPS 0
+#define EEPROM_PARAM_OFFSET_STEP_DELAY_US 2
+#define EEPROM_PARAM_OFFSET_WIFI_PING_RATE 4
+#define EEPROM_PARAM_OFFSET_STEPPER_WAKE_DELAY_MS 6
+#define EEPROM_PARAM_OFFSET_SOLENOID_SURGE_POWER 8
+#define EEPROM_PARAM_OFFSET_SOLENOID_SUSTAIN_POWER 9
+#define EEPROM_PARAM_OFFSET_SOLENOID_SURGE_PERIOD_MS 10
+#define EEPROM_PARAM_OFFSET_DELAY_BETWEEN_SAMPLES 12
+#define EEPROM_PARAM_OFFSET_SENSOR_PARAMS 14
+#define EEPROM_PARAM_OFFSET_CALIBRATION_STEPS 16
+#define EEPROM_ADDR_ASSAY_CACHE 70
+#define EEPROM_ADDR_TEST_CACHE 1238
 
 // request
 #define REQUEST_INDEX_INDEX UUID_LENGTH
@@ -29,9 +46,6 @@
 #define ASSAY_NAME_MAX_LENGTH 64
 
 // params
-#define PARAM_BYTES 18
-#define PARAM_COUNT 10
-#define PARAM_INDEX 28
 #define PARAM_CHANGE_INDEX 2
 #define PARAM_CHANGE_LENGTH 1
 #define PARAM_CHANGE_VALUE 5
@@ -58,11 +72,14 @@
 #define STATUS(...) snprintf(particle_status, STATUS_LENGTH, __VA_ARGS__)
 #define TEST_DURATION_LENGTH 6
 
-// device
+// particle
 #define PARTICLE_REGISTER_SIZE 622
 #define PARTICLE_ARG_SIZE 63
 #define PARTICLE_COMMAND_CODE_LENGTH 2
 #define PARTICLE_COMMAND_PARAM_LENGTH 6
+
+// device LED
+#define DEVICE_LED_BLINK_DELAY 500
 
 // QR scanner
 #define QR_COMMAND_PREFIX "\x02M\x0D"
@@ -91,7 +108,12 @@ bool device_busy;
 bool test_in_progress;
 bool start_test;
 bool cancel_process;
-unsigned long test_last_progress_update;
+
+// blinking device LED
+bool device_LED_blinking;
+bool device_LED_blink_on;
+unsigned long device_LED_change_time;
+unsigned long device_LED_blink_timeout;
 
 // BCODE globals
 int BCODE_length;
@@ -103,6 +125,11 @@ char BCODE_uuid[UUID_LENGTH + 1];
 // sensors
 TCS34725 tcsAssay;
 TCS34725 tcsControl;
+
+// progress
+int test_progress;
+int test_percent_complete;
+unsigned long test_last_progress_update;
 
 // uuids
 char request_uuid[UUID_LENGTH];
