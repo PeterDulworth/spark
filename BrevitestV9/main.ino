@@ -18,6 +18,28 @@ int extract_int_from_string(char *str, int pos, int len) {
 
 /////////////////////////////////////////////////////////////
 //                                                         //
+//                         EEPROM                          //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+void load_eeprom() {
+  uint8_t *e = (uint8_t *) &eeprom;
+
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+    *e = EEPROM.read(addr);
+  }
+}
+
+void store_eeprom() {
+  uint8_t *e = (uint8_t *) &eeprom;
+
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+    EEPROM.write(addr, *e);
+  }
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
 //                        SOLENOID                         //
 //                                                         //
 /////////////////////////////////////////////////////////////
@@ -88,10 +110,42 @@ void reset_stage() {
     move_steps(-(long) eeprom.param.reset_steps, eeprom.param.step_delay_us);
 }
 
+void set_calibration_point() {
+  uint8_t lsb, msb;
+
+  msb = (uint8_t) (eeprom.param.calibration_steps >> 8);
+  lsb = (uint8_t) (eeprom.param.calibration_steps & 0x0F);
+  EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_OFFSET_PARAM_CALIBRATION_STEPS, msb);
+  EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_OFFSET_PARAM_CALIBRATION_STEPS + 1, lsb);
+}
+
 void move_to_calibration_point() {
     CANCELLABLE(reset_stage();)
     delay(500);
     CANCELLABLE(move_steps(eeprom.param.calibration_steps, eeprom.param.step_delay_us);)
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
+//                       DEVICE LED                        //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int turn_on_device_LED() {
+  analogWrite(pinDeviceLED, 255);
+  device_LED.currently_on = true;
+  return 1;
+}
+
+int turn_off_device_LED() {
+  analogWrite(pinDeviceLED, 0);
+  device_LED.currently_on = false;
+  return 1;
+}
+
+void start_blinking_device_LED(int total_duration) {
+  device_LED.blink_timeout = Time.now() + total_duration;
+  device_LED.blinking = true;
 }
 
 /////////////////////////////////////////////////////////////
@@ -539,7 +593,7 @@ int request_data(String msg) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int write_serial_number() {
+int command_write_serial_number() {
     for (int i = 0; i < EEPROM_SERIAL_NUMBER_LENGTH; i += 1) {
         eeprom.serial_number[i] = particle_command.param[i];
         EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, particle_command.param[i]);
@@ -547,7 +601,7 @@ int write_serial_number() {
     return 1;
 }
 
-int scan_QR_code() {
+int command_scan_QR_code() {
     // param: user_uuid
     if (memcmp(user_uuid, &particle_command.param, UUID_LENGTH) != 0) {
         return -201;
@@ -559,30 +613,27 @@ int scan_QR_code() {
     return 0;
 }
 
-int claim_device() {
+int command_claim_device() {
     // param: user_uuid, assay_uuid
     if (device_busy) {
         return -200;
     }
 
     device_busy = true;
-    memcpy(user_uuid, &particle_command.param, UUID_LENGTH);
+    memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
     assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
-    if (assay_index == -1) {
-        return 1;   // assay not cached; load assay from cloud
-    }
-    else {
-        return 0;    // assay found in cache
-    }
+
+    return assay_index;
 }
 
-int release_device() {
-    user_uuid[0] = '\0';
+int command_release_device() {
+    claimant_uuid[0] = '\0';
     assay_index = -1;
     device_busy = false;
+    return 1;
 }
 
-int run_brevitest() {
+int command_run_brevitest() {
     if (device_busy) {
         ERROR_MESSAGE(-11);
         return -1;
@@ -594,116 +645,104 @@ int run_brevitest() {
     return 1;
 }
 
-int get_firmware_version() {
+int command_get_firmware_version() {
     int version = EEPROM.read(0);
     return version;
 }
 
-int cancel_brevitest() {
+int command_cancel_brevitest() {
     cancel_process = true;
     return 1;
 }
 
-int receive_BCODE() {
-    int num;
+int load_buffer_from_cloud() {
+    STATUS("Receiving string into buffer");
 
-    STATUS("Receiving BCODE");
-
-    num = extract_int_from_string(particle_command.param, 0, BCODE_NUM_LENGTH);
-    if (BCODE_count != num) {
-        ERROR_MESSAGE("BCODE index mismatch");
+    if (btBuf.packet_number != extract_int_from_string(particle_command.param, BUFFER_PACKET_NUMBER_INDEX, BUFFER_PACKET_NUMBER_LENGTH)) {
+        ERROR_MESSAGE("Buffer packet received out of order");
         ERROR_MESSAGE(particle_command.param);
-        BCODE_length = 0;
-        return -1;
+        return -300;
     }
-    if (num == 0) { // first packet, contains number of packets (not including this packet)
-        BCODE_packets = extract_int_from_string(particle_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
-        memcpy(BCODE_uuid, &particle_command.param[BCODE_UUID_INDEX], UUID_LENGTH);
-        BCODE_index = 0;
-        BCODE_length = 0;
+    if (btBuf.packet_number == 0) { // first packet, payload is number of packets (not including this packet) and total payload length
+        btBuf.index = 0;
+        memcpy(btBuf.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
+        btBuf.number_of_packets = extract_int_from_string(particle_command.param, BUFFER_NUMBER_OF_PACKETS_INDEX, BUFFER_NUMBER_OF_PACKETS_LENGTH);
+        btBuf.message_size = extract_int_from_string(particle_command.param, BUFFER_MESSAGE_SIZE_INDEX, BUFFER_MESSAGE_SIZE_LENGTH);
+        memcpy(buffer_id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
     }
-    else { // payload packet, contains payload count, packet length, uuid, and payload
-        if (num <= BCODE_packets) {
-            if (memcmp(BCODE_uuid, &particle_command.param[BCODE_UUID_INDEX], UUID_LENGTH) != 0) {
-                ERROR_MESSAGE(-20);
-                BCODE_length = 0;
-                return -1;
+    else { // payload packet, contains payload count, packet length, packet id, and payload
+        if (btBuf.packet_number <= btBuf.number_of_packets) {
+            if (memcmp(btBuf.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH) != 0) {
+                return -301;
             }
-            BCODE_length = extract_int_from_string(particle_command.param, BCODE_NUM_LENGTH, BCODE_LEN_LENGTH);
-            if ((BCODE_index + BCODE_length) > BCODE_CAPACITY) {
-                ERROR_MESSAGE(-21);
-                BCODE_length = 0;
-                return -1;
-            }
-            memcpy(&eeprom.assay_cache[assay_index].BCODE[BCODE_index], &particle_command.param[BCODE_PAYLOAD_INDEX], BCODE_length);
-            BCODE_index += BCODE_length;
+            btBuf.payload_size = extract_int_from_string(particle_command.param, BUFFER_PAYLOAD_SIZE_INDEX, BUFFER_PAYLOAD_SIZE_LENGTH);
+            memcpy(&btBuf.buffer[btBuf.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], btBuf.payload_size);
+            btBuf.index += btBuf.payload_size;
         }
         else {
-            ERROR_MESSAGE(-22);
-            BCODE_length = 0;
-            return -1;
+            return -302;
         }
     }
 
-    if (num < BCODE_packets) {
-        BCODE_count++;
+    if (btBuf.packet_number < btBuf.number_of_packets) {
+        btBuf.packet_number++;
     }
     else { // last packet
-        BCODE_length = BCODE_index;
-        eeprom.assay_cache[assay_index].BCODE[BCODE_length] = '\0';
-        BCODE_count = 0;
-        BCODE_packets = 0;
-        BCODE_index = 0;
+        if (btBuf.index != btBuf.message_size); {
+            ERROR_MESSAGE("Buffer payload not transferred properly");
+            return -303;
+        }
+        btBuf.packet_number = -1;
     }
 
-    return num;
+    return btBuf.packet_number;
 }
 
-int set_and_move_to_calibration_point() {
-    int calibration_steps;
-    uint8_t lsb, msb;
+int command_load_assay() {
+    int result;
 
+    btBuf.packet_number = 0;
+    do {
+        result = load_buffer_from_cloud();
+        if (result < -1) { // error generated
+            return result;
+        }
+    } while (result != -1);
+
+    assay_index = (eeprom.cache_count >> 4) % ASSAY_CACHE_SIZE);
+    assay_index = assay_index < 0 ? 0 : assay_index;
+
+    // populate assay struct from buffer;
+}
+
+int command_set_and_move_to_calibration_point() {
     eeprom.param.calibration_steps = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
 
-    msb = (uint8_t) (eeprom.param.calibration_steps >> 8);
-    lsb = (uint8_t) (eeprom.param.calibration_steps & 0x0F);
-    EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_PARAM_OFFSET_CALIBRATION_STEPS, msb);
-    EEPROM.write(EEPROM_ADDR_PARAM + EEPROM_PARAM_OFFSET_CALIBRATION_STEPS + 1, lsb);
-
+    set_calibration_point();
     move_to_calibration_point();
 
     return 1;
 }
 
-int move_stage() {
+int command_move_stage() {
   int steps = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
   move_steps(steps, eeprom.param.step_delay_us);
   return 1;
 }
 
-int energize_solenoid() {
+int command_energize_solenoid() {
   int duration = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
   move_solenoid(duration);
   return 1;
 }
 
-int turn_on_device_LED() {
-  analogWrite(pinDeviceLED, 255);
+int command_blink_device_LED() {
+  int duration = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
+  start_blinking_device_LED(duration);
   return 1;
 }
 
-int turn_off_device_LED() {
-  analogWrite(pinDeviceLED, 0);
-  return 1;
-}
-
-int blink_device_LED() {
-  device_LED_blink_timeout = Time.now() + extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
-  device_LED_blinking = true;
-  return 1;
-}
-
-int read_QR_code() {
+int command_read_QR_code() {
   return 1;
 }
 
@@ -724,37 +763,45 @@ int run_command(String msg) {
     parse_particle_command(msg);
 
     switch (particle_command.code) {
-      // operating functions
+    // operating functions
         case 1: // run test
-            return run_brevitest();
+            return command_run_brevitest();
         case 2: // cancel test
-            return cancel_brevitest();
+            return command_cancel_brevitest();
+        case 3: // claim device
+            return command_claim_device();
+        case 4: // release device
+            return command_release_device();
 
-      // configuration functions
-        case 10: // set device serial number
-            return write_serial_number();
-        case 11: // change device parameter
-            return change_param();
-        case 12: // reset device parameters to default
-            return reset_params();
-        case 13: // get current firmware version number
-            return get_firmware_version();
-        case 14: // set and move to calibration point
-            return set_and_move_to_calibration_point();
+    // data transfer
+        case 10: // transfer data to buffer
+            return command_receive_packet();
+            
+    // configuration functions
+        case 50: // set device serial number
+            return command_write_serial_number();
+        case 51: // change device parameter
+            return command_change_param();
+        case 52: // reset device parameters to default
+            return command_reset_params();
+        case 53: // get current firmware version number
+            return command_get_firmware_version();
+        case 54: // set and move to calibration point
+            return command_set_and_move_to_calibration_point();
 
       // test functions
         case 100:
-            return move_stage();
+            return command_move_stage();
         case 101:
-            return energize_solenoid();
+            return command_energize_solenoid();
         case 102:
             return turn_on_device_LED();
         case 103:
             return turn_off_device_LED();
         case 104:
-            return blink_device_LED();
+            return command_blink_device_LED();
         case 105:
-            return read_QR_code();
+            return command_read_QR_code();
         default:
             return -1;
     }
@@ -987,28 +1034,6 @@ int process_BCODE(int start_index) {
 
 /////////////////////////////////////////////////////////////
 //                                                         //
-//                         EEPROM                          //
-//                                                         //
-/////////////////////////////////////////////////////////////
-
-void load_eeprom() {
-  uint8_t *e = (uint8_t *) &eeprom;
-
-  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
-    *e = EEPROM.read(addr);
-  }
-}
-
-void store_eeprom() {
-  uint8_t *e = (uint8_t *) &eeprom;
-
-  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
-    EEPROM.write(addr, *e);
-  }
-}
-
-/////////////////////////////////////////////////////////////
-//                                                         //
 //                          SETUP                          //
 //                                                         //
 /////////////////////////////////////////////////////////////
@@ -1018,6 +1043,7 @@ void setup() {
   Spark.function("requestdata", request_data);
   Spark.variable("register", particle_register, STRING);
   Spark.variable("status", particle_status, STRING);
+  Spark.variable("claimant", claimant_uuid, STRING);
   Spark.variable("percentdone", &test_percent_complete, INT);
 
   pinMode(pinLimitSwitch, INPUT_PULLUP);
@@ -1073,20 +1099,38 @@ void do_run_test() {
 
     test_index = eeprom.cache_count & 0x0F;
 
-    move_to_calibration_point();
-    process_BCODE(0);
+    scan_QR_code();
+    if (verify_cartridge()) {
+      move_to_calibration_point();
+      process_BCODE(0);
 
-    update_progress("Test complete", -1);
+      update_progress("Test complete", -1);
 
-    test_index = -1;
-    test_in_progress = false;
+      test_index = -1;
+      test_in_progress = false;
 
-    release_device();
+      release_device();
+    }
+}
+
+void update_blinking_device_LED() {
+  unsigned long now = Time.now();
+
+  if (now > device_LED.change_time) { // change LED state and reset blink timer
+    if (device_LED.currently_on) {
+      turn_off_device_LED();
+    }
+    else {
+      turn_on_device_LED();
+    }
+    device_LED.change_time = now + DEVICE_LED_BLINK_DELAY;
+  }
+  if (now > device_LED.blink_timeout) {
+    device_LED.blinking = false;
+  }
 }
 
 void loop(){
-    unsigned long now;
-
     if (start_test && !test_in_progress) {
         do_run_test();
     }
@@ -1095,20 +1139,7 @@ void loop(){
         cancel_process = false;
     }
 
-    if (device_LED_blinking) {
-      now = Time.now();
-      if (now > device_LED_change_time) { // change LED state and reset blink timer
-        if (device_LED_blink_on) {
-          turn_off_device_LED();
-        }
-        else {
-          turn_on_device_LED();
-        }
-        device_LED_blink_on = !device_LED_blink_on;
-        device_LED_change_time = now + DEVICE_LED_BLINK_DELAY;
-      }
-      if (now > device_LED_blink_timeout) {
-        device_LED_blinking = false;
-      }
+    if (device_LED.blinking) {
+      update_blinking_device_LED();
     }
 }
