@@ -127,6 +127,64 @@ void move_to_calibration_point() {
 
 /////////////////////////////////////////////////////////////
 //                                                         //
+//                       QR SCANNER                        //
+//                                                         //
+/////////////////////////////////////////////////////////////
+
+int scan_QR_code() {
+    unsigned long timeout;
+    int buf, i;
+
+    digitalWrite(pinQRPower, HIGH);
+    delay(QR_DELAY_AFTER_POWER_ON_MS);
+    digitalWrite(pinQRTrigger, LOW);
+    delay(QR_DELAY_AFTER_TRIGGER_MS);
+    digitalWrite(pinQRTrigger, HIGH);
+    timeout = Time.now() + QR_READ_TIMEOUT;
+    while (!Serial1.available()) {
+        if (Time.now() > timeout) {
+            return -500;
+        }
+        Spark.process();
+    }
+    i = 0;
+    do {
+        buf = Serial1.read();
+        if (buf == -1) {
+            return -501;
+        }
+        qr_uuid[i++] = (char) buf;
+    } while (i < UUID_LENGTH && Serial1.available());
+
+    return 0;
+}
+
+int validate_QR_code(char *uuid_to_validate) {
+    int scan_result = scan_QR_code();
+
+    if (scan_result == 0) {
+        return memcmp(qr_uuid, uuid_to_validate, UUID_LENGTH);
+    }
+    else {
+        return scan_result;
+    }
+}
+
+int get_QR_code_value() {
+    int scan_result = scan_QR_code();
+
+    if (scan_result == 0) {
+        memcpy(particle_register, qr_uuid, UUID_LENGTH);
+        particle_register[UUID_LENGTH] = '\0';
+        return 0;
+    }
+    else {
+        return scan_result;
+    }
+}
+
+/////////////////////////////////////////////////////////////
+//                                                         //
 //                       DEVICE LED                        //
 //                                                         //
 /////////////////////////////////////////////////////////////
@@ -288,30 +346,18 @@ void write_assay_record_to_eeprom() {
 }
 
 void store_assay(int index) {
-  uint8_t *e = (uint8_t *) &eeprom.assay_cache[index];
+    uint8_t *e = (uint8_t *) &eeprom.assay_cache[index];
 
-  for (int addr = ASSAY_CACHE_INDEX; addr < (ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH); addr++, e++) {
-    EEPROM.write(addr, *e);
-  }
+    for (int addr = ASSAY_CACHE_INDEX; addr < (ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH); addr++, e++) {
+        EEPROM.write(addr, *e);
+    }
 
-  eeprom.cache_count = eeprom.cache_count & 0x0F + ((index + 1) % ASSAY_CACHE_SIZE) << 4;
-  EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
+    eeprom.cache_count = eeprom.cache_count & 0x0F + ((index + 1) % ASSAY_CACHE_SIZE) << 4;
+    EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
 }
 
 int get_assay_record_by_uuid() {
-    // particle_request.param is num
-    int index;
-
-    if (particle_request.index == 0) {  // initial request
-        strncpy(request_uuid, particle_request.uuid, UUID_LENGTH);
-    }
-    else {  // continuation request
-        if (strncmp(particle_request.uuid, request_uuid, UUID_LENGTH) != 0) {
-            return -3;
-        }
-    }
-
-    index = get_assay_index_by_uuid(particle_request.uuid);
+    int index = get_assay_index_by_uuid(particle_request.uuid);
     if (index == -1) {
       return -2;
     }
@@ -325,8 +371,8 @@ int process_assay_record(int index) {
 
     assay = &eeprom.assay_cache[index];
 
-    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%64s\t%3d\t%3d\n%s\n", \
-        assay->uuid, assay->name, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
+    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%s\t%d\t%d\t%d\n%s\n", \
+        assay->uuid, assay->name, assay->duration, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
 
     particle_register[len] = '\0';
     return 0;
@@ -366,19 +412,7 @@ void store_test(int index) {
 }
 
 int get_test_record_by_uuid() {
-    // particle_request.param is num
-    int index;
-
-    if (particle_request.index == 0) {  // initial request
-        strncpy(request_uuid, particle_request.uuid, UUID_LENGTH);
-    }
-    else {  // continuation request
-        if (strncmp(particle_request.uuid, request_uuid, UUID_LENGTH) != 0) {
-            return -3;
-        }
-    }
-
-    index = get_test_index_by_uuid(particle_request.uuid);
+    int index = get_test_index_by_uuid(particle_request.uuid);
     if (index == -1) {
       return -2;
     }
@@ -465,36 +499,22 @@ int get_all_param_values() {
     return 0;
 }
 
-int change_param() {
-    int index, len, value;
-    uint16_t *value16 = &eeprom.param.reset_steps;
-    uint8_t *value8 = (uint8_t *) &eeprom.param.reset_steps;
+int change_byte_param(int index, int value) {
+    uint8_t *addr = (uint8_t *) &eeprom.param.reset_steps;
 
-    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
-    if (index < 0) {
-      return -110;
-    }
-    if (index >= EEPROM_PARAM_LENGTH) {
-      return -111;
-    }
+    *(addr + index) = value;
+    store_params();
+    return value;
+}
 
-    len = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
-    value = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX + PARAM_CHANGE_LENGTH, PARAM_CHANGE_VALUE);
-    if (len == 1) {
-        value8 += index;
-        *value8 = value;
-    }
-    else if (len == 2) {
-        if (index % 2 == 0) {
-            value16 += index;
-            *value16 = value;
-        }
-        else {
-            return -117;
-        }
+int change_word_param(int index, int value) {
+    uint16_t *addr = &eeprom.param.reset_steps;
+
+    if (index % 2 == 0) {
+        *(addr + index) = value;
     }
     else {
-        return -118;
+        return -117;
     }
 
     store_params();
@@ -581,6 +601,8 @@ int request_data(String msg) {
                 return get_all_param_values();
             case 4: // one parameter
                 return get_param_value();
+            case 5: // one parameter
+                return get_QR_code_value();
         }
     }
 
@@ -593,24 +615,29 @@ int request_data(String msg) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int command_write_serial_number() {
-    for (int i = 0; i < EEPROM_SERIAL_NUMBER_LENGTH; i += 1) {
-        eeprom.serial_number[i] = particle_command.param[i];
-        EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, particle_command.param[i]);
+int command_run_brevitest() {
+    if (device_busy) {
+        ERROR_MESSAGE(-11);
+        return -70;
     }
+
+    if (assay_index == -1) {
+        return -71;
+    }
+
+    if (test_index == -1) {
+        return -72;
+    }
+
+    start_test = true;
+    update_progress("Starting test", 0);
+
     return 1;
 }
 
-int command_scan_QR_code() {
-    // param: user_uuid
-    if (memcmp(user_uuid, &particle_command.param, UUID_LENGTH) != 0) {
-        return -201;
-    }
-
-    // scan QR code
-    // load QR code into particle register
-    // send QR code to cloud for cartridge verification
-    return 0;
+int command_cancel_brevitest() {
+    cancel_process = true;
+    return 1;
 }
 
 int command_claim_device() {
@@ -633,86 +660,146 @@ int command_release_device() {
     return 1;
 }
 
-int command_run_brevitest() {
-    if (device_busy) {
-        ERROR_MESSAGE(-11);
+int command_start_assay_transfer() {
+    transfer_type = 1;
+    initiate_data_transfer();
+    return 1;
+}
+
+int command_start_test_transfer() {
+    transfer_type = 2;
+    initiate_data_transfer();
+    return 1;
+}
+
+void initiate_data_transfer() {
+    // first packet, payload is number of packets (not including this packet) and total payload length
+    data_transfer.index = 0;
+    data_transfer.packet_number = 0;
+    memcpy(data_transfer.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
+    data_transfer.number_of_packets = extract_int_from_string(particle_command.param, BUFFER_NUMBER_OF_PACKETS_INDEX, BUFFER_NUMBER_OF_PACKETS_LENGTH);
+    data_transfer.message_size = extract_int_from_string(particle_command.param, BUFFER_MESSAGE_SIZE_INDEX, BUFFER_MESSAGE_SIZE_LENGTH);
+}
+
+int command_receive_packet() {
+    STATUS("Receiving data packet from cloud");
+
+    // payload packet, contains packet number, packet length, packet id, and payload
+
+    data_transfer.packet_number++;
+    if (data_transfer.packet_number != extract_int_from_string(particle_command.param, BUFFER_PACKET_NUMBER_INDEX, BUFFER_PACKET_NUMBER_LENGTH)) {
+        ERROR_MESSAGE("Data packet received out of order");
+        ERROR_MESSAGE(particle_command.param);
+        return -300;
+    }
+
+    if (data_transfer.packet_number > data_transfer.number_of_packets) { //
+        ERROR_MESSAGE("Too many packets");
+        ERROR_MESSAGE(particle_command.param);
+        return -301;
+    }
+
+    if (memcmp(data_transfer.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH) != 0) {
+        ERROR_MESSAGE("Data transfer buffer ID mismatch");
+        ERROR_MESSAGE(particle_command.param);
+        return -302;
+    }
+
+    data_transfer.payload_size = extract_int_from_string(particle_command.param, BUFFER_PAYLOAD_SIZE_INDEX, BUFFER_PAYLOAD_SIZE_LENGTH);
+    memcpy(&data_transfer.buffer[data_transfer.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], data_transfer.payload_size);
+    data_transfer.index += data_transfer.payload_size;
+
+    if (data_transfer.index >= data_transfer.message_size); {
+        ERROR_MESSAGE("Buffer payload not transferred properly");
+        return -303;
+    }
+
+    if (data_transfer.index == data_transfer.message_size - 1); {   // last packet
+        switch (transfer_type) {
+            case 1: // assay
+                load_assay_from_buffer();
+                break;
+            case 2: // test
+                load_test_from_buffer();
+                break;
+            default:
+                return -305;
+        }
         return -1;
     }
 
-    start_test = true;
-    update_progress("Starting test", 0);
+    return data_transfer.packet_number;
+}
 
+int load_assay_from_buffer() {
+    BrevitestAssayRecord *assay;
+    char *buf = data_transfer.buffer;
+
+    assay_index = eeprom.cache_count >> 4;
+    assay_index %= ASSAY_CACHE_SIZE;
+
+    assay = &eeprom.assay_cache[assay_index];
+
+    memcpy(assay->uuid, &buf[ASSAY_BUFFER_UUID_INDEX], UUID_LENGTH);
+    strncpy(assay->name, &buf[ASSAY_BUFFER_NAME_INDEX], ASSAY_NAME_MAX_LENGTH);
+    assay->duration = extract_int_from_string(buf, ASSAY_BUFFER_DURATION_INDEX, ASSAY_BUFFER_DURATION_LENGTH);
+    assay->BCODE_length = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_SIZE_INDEX, ASSAY_BUFFER_BCODE_SIZE_LENGTH);
+    assay->BCODE_version = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_VERSION_INDEX, ASSAY_BUFFER_BCODE_VERSION_LENGTH);
+    strncpy(assay->BCODE, &buf[ASSAY_BUFFER_BCODE_INDEX], ASSAY_BCODE_CAPACITY);
+}
+
+int load_test_from_buffer() {
+    BrevitestTestRecord *test;
+    char *buf = data_transfer.buffer;
+
+    test_index = eeprom.cache_count & 0x0F;
+    test_index %= TEST_CACHE_SIZE;
+
+    test = &eeprom.test_cache[test_index];
+
+    memcpy(test->test_uuid, &buf[TEST_BUFFER_TEST_UUID_INDEX], UUID_LENGTH);
+    memcpy(test->cartridge_uuid, &buf[TEST_BUFFER_CARTRIDGE_UUID_INDEX], UUID_LENGTH);
+    memcpy(test->assay_uuid, &buf[TEST_BUFFER_ASSAY_UUID_INDEX], UUID_LENGTH);
+}
+
+int command_write_serial_number() {
+    for (int i = 0; i < EEPROM_SERIAL_NUMBER_LENGTH; i += 1) {
+        eeprom.serial_number[i] = particle_command.param[i];
+        EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, particle_command.param[i]);
+    }
     return 1;
+}
+
+int command_change_param() {
+    int index, len, value;
+
+    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
+    if (index < 0) {
+      return -110;
+    }
+    if (index >= EEPROM_PARAM_LENGTH) {
+      return -111;
+    }
+
+    len = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
+    value = extract_int_from_string(particle_command.param, PARAM_CHANGE_INDEX + PARAM_CHANGE_LENGTH, PARAM_CHANGE_VALUE);
+
+    if (len == 1) {
+        return change_byte_param(index, value);
+    }
+    if (len == 2) {
+        return change_word_param(index, value);
+    }
+    return -112;
+}
+
+int command_reset_params() {
+    reset_params();
 }
 
 int command_get_firmware_version() {
     int version = EEPROM.read(0);
     return version;
-}
-
-int command_cancel_brevitest() {
-    cancel_process = true;
-    return 1;
-}
-
-int load_buffer_from_cloud() {
-    STATUS("Receiving string into buffer");
-
-    if (btBuf.packet_number != extract_int_from_string(particle_command.param, BUFFER_PACKET_NUMBER_INDEX, BUFFER_PACKET_NUMBER_LENGTH)) {
-        ERROR_MESSAGE("Buffer packet received out of order");
-        ERROR_MESSAGE(particle_command.param);
-        return -300;
-    }
-    if (btBuf.packet_number == 0) { // first packet, payload is number of packets (not including this packet) and total payload length
-        btBuf.index = 0;
-        memcpy(btBuf.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
-        btBuf.number_of_packets = extract_int_from_string(particle_command.param, BUFFER_NUMBER_OF_PACKETS_INDEX, BUFFER_NUMBER_OF_PACKETS_LENGTH);
-        btBuf.message_size = extract_int_from_string(particle_command.param, BUFFER_MESSAGE_SIZE_INDEX, BUFFER_MESSAGE_SIZE_LENGTH);
-        memcpy(buffer_id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
-    }
-    else { // payload packet, contains payload count, packet length, packet id, and payload
-        if (btBuf.packet_number <= btBuf.number_of_packets) {
-            if (memcmp(btBuf.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH) != 0) {
-                return -301;
-            }
-            btBuf.payload_size = extract_int_from_string(particle_command.param, BUFFER_PAYLOAD_SIZE_INDEX, BUFFER_PAYLOAD_SIZE_LENGTH);
-            memcpy(&btBuf.buffer[btBuf.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], btBuf.payload_size);
-            btBuf.index += btBuf.payload_size;
-        }
-        else {
-            return -302;
-        }
-    }
-
-    if (btBuf.packet_number < btBuf.number_of_packets) {
-        btBuf.packet_number++;
-    }
-    else { // last packet
-        if (btBuf.index != btBuf.message_size); {
-            ERROR_MESSAGE("Buffer payload not transferred properly");
-            return -303;
-        }
-        btBuf.packet_number = -1;
-    }
-
-    return btBuf.packet_number;
-}
-
-int command_load_assay() {
-    int result;
-
-    btBuf.packet_number = 0;
-    do {
-        result = load_buffer_from_cloud();
-        if (result < -1) { // error generated
-            return result;
-        }
-    } while (result != -1);
-
-    assay_index = (eeprom.cache_count >> 4) % ASSAY_CACHE_SIZE);
-    assay_index = assay_index < 0 ? 0 : assay_index;
-
-    // populate assay struct from buffer;
 }
 
 int command_set_and_move_to_calibration_point() {
@@ -742,8 +829,21 @@ int command_blink_device_LED() {
   return 1;
 }
 
+int command_verify_QR_code() {
+    // param: cartridge_uuid
+
+    int scan_result = scan_QR_code();
+
+    if (scan_result == 0) {
+        return memcmp(qr_uuid, &particle_command.param, UUID_LENGTH);
+    }
+    else {
+        return scan_result;
+    }
+}
+
 int command_read_QR_code() {
-  return 1;
+  return scan_QR_code();
 }
 
 //
@@ -774,34 +874,41 @@ int run_command(String msg) {
             return command_release_device();
 
     // data transfer
-        case 10: // transfer data to buffer
+        case 10: // process data transfer packet
             return command_receive_packet();
-            
+
+        case 20: // satrt assay transfer
+            return command_start_assay_transfer();
+        case 21: // satrt assay transfer
+            return command_start_test_transfer();
+
     // configuration functions
-        case 50: // set device serial number
+        case 30: // set device serial number
             return command_write_serial_number();
-        case 51: // change device parameter
+        case 31: // change device parameter
             return command_change_param();
-        case 52: // reset device parameters to default
+        case 32: // reset device parameters to default
             return command_reset_params();
-        case 53: // get current firmware version number
+        case 33: // get current firmware version number
             return command_get_firmware_version();
-        case 54: // set and move to calibration point
+        case 34: // set and move to calibration point
             return command_set_and_move_to_calibration_point();
 
       // test functions
-        case 100:
+        case 50:
             return command_move_stage();
-        case 101:
+        case 51:
             return command_energize_solenoid();
-        case 102:
+        case 52:
             return turn_on_device_LED();
-        case 103:
+        case 53:
             return turn_off_device_LED();
-        case 104:
+        case 54:
             return command_blink_device_LED();
-        case 105:
+        case 55:
             return command_read_QR_code();
+        case 56:
+            return command_verify_QR_code();
         default:
             return -1;
     }
@@ -832,7 +939,7 @@ int get_BCODE_token(int index, int *token) {
 
     // there is a parameter to extract
     i = index;
-    while (i < BCODE_CAPACITY) {
+    while (i < ASSAY_BCODE_CAPACITY) {
         if (bcode[i] == '\0') {
             *token = extract_int_from_string(bcode, index, (i - index));
             return i; // return end of string location
@@ -947,26 +1054,7 @@ int process_one_BCODE_command(int cmd, int index) {
             read_sensors(1);
             break;
         case 10: // Read QR code
-            digitalWrite(pinQRPower, HIGH);
-            delay(1000);
-            Serial1.begin(115200);
-            digitalWrite(pinQRTrigger, LOW);
-            delay(50);
-            digitalWrite(pinQRTrigger, HIGH);
-            timeout = Time.now() + QR_READ_TIMEOUT;
-            while (!Serial1.available()) {
-                if (Time.now() > timeout) {
-                    return -1;
-                }
-                Spark.process();
-            };
-            i = 0;
-            do {
-                buf = Serial1.read();
-                if (buf == -1 || test_record->cartridge_uuid[i++] != (char) buf) {
-                    return -1;
-                }
-            } while (i < UUID_LENGTH);
+            scan_QR_code();
             break;
         case 11: // Beep (milliseconds)
             Serial.println("Beep not implemented");
@@ -1097,10 +1185,7 @@ void do_run_test() {
     analogWrite(pinSolenoid, 0);
     analogWrite(pinSensorLED, 0);
 
-    test_index = eeprom.cache_count & 0x0F;
-
-    scan_QR_code();
-    if (verify_cartridge()) {
+    if (validate_QR_code(eeprom.test_cache[test_index].cartridge_uuid)) {
       move_to_calibration_point();
       process_BCODE(0);
 
@@ -1109,21 +1194,21 @@ void do_run_test() {
       test_index = -1;
       test_in_progress = false;
 
-      release_device();
+      command_release_device();
     }
 }
 
 void update_blinking_device_LED() {
   unsigned long now = Time.now();
 
-  if (now > device_LED.change_time) { // change LED state and reset blink timer
+  if (now > device_LED.blink_change_time) { // change LED state and reset blink timer
     if (device_LED.currently_on) {
       turn_off_device_LED();
     }
     else {
       turn_on_device_LED();
     }
-    device_LED.change_time = now + DEVICE_LED_BLINK_DELAY;
+    device_LED.blink_change_time = now + DEVICE_LED_BLINK_DELAY;
   }
   if (now > device_LED.blink_timeout) {
     device_LED.blinking = false;

@@ -49,6 +49,21 @@
 #define ASSAY_UUID_INDEX (ASSAY_PACKETS_INDEX + ASSAY_PACKETS_LENGTH)
 #define ASSAY_BCODE_CAPACITY 489
 
+// buffer mappings
+#define ASSAY_BUFFER_UUID_INDEX 0
+#define ASSAY_BUFFER_NAME_INDEX (ASSAY_BUFFER_UUID_INDEX + UUID_LENGTH)
+#define ASSAY_BUFFER_DURATION_INDEX (ASSAY_BUFFER_NAME_INDEX + ASSAY_NAME_MAX_LENGTH)
+#define ASSAY_BUFFER_DURATION_LENGTH 6
+#define ASSAY_BUFFER_BCODE_SIZE_INDEX (ASSAY_BUFFER_DURATION_INDEX + ASSAY_BUFFER_DURATION_LENGTH)
+#define ASSAY_BUFFER_BCODE_SIZE_LENGTH 3
+#define ASSAY_BUFFER_BCODE_VERSION_INDEX (ASSAY_BUFFER_BCODE_SIZE_INDEX + ASSAY_BUFFER_BCODE_SIZE_LENGTH)
+#define ASSAY_BUFFER_BCODE_VERSION_LENGTH 3
+#define ASSAY_BUFFER_BCODE_INDEX (ASSAY_BUFFER_BCODE_VERSION_INDEX + ASSAY_BUFFER_BCODE_VERSION_LENGTH)
+
+#define TEST_BUFFER_TEST_UUID_INDEX 0
+#define TEST_BUFFER_CARTRIDGE_UUID_INDEX (TEST_BUFFER_TEST_UUID_INDEX + UUID_LENGTH)
+#define TEST_BUFFER_ASSAY_UUID_INDEX (TEST_BUFFER_CARTRIDGE_UUID_INDEX + UUID_LENGTH)
+
 // params
 #define PARAM_CHANGE_INDEX 2
 #define PARAM_CHANGE_LENGTH 1
@@ -93,7 +108,9 @@
 // device LED
 #define DEVICE_LED_BLINK_DELAY 500
 
-// QR scanner
+// qr scanner
+#define QR_DELAY_AFTER_POWER_ON_MS 1000
+#define QR_DELAY_AFTER_TRIGGER_MS 50
 #define QR_COMMAND_PREFIX "\x02M\x0D"
 #define QR_COMMAND_ACTIVATE "\x02T\x0D"
 #define QR_COMMAND_DEACTIVATE "\x02U\x0D"
@@ -138,7 +155,7 @@ struct BrevitestBuffer {
     int message_size;
     int number_of_packets;
     char buffer[BUFFER_SIZE];
-} btBuf;
+} data_transfer;
 
 // sensors
 TCS34725 tcsAssay;
@@ -152,11 +169,13 @@ unsigned long test_last_progress_update;
 // uuids
 char request_uuid[UUID_LENGTH];
 char claimant_uuid[UUID_LENGTH];
-char cartridge_uuid[UUID_LENGTH];
+char test_uuid[UUID_LENGTH];
+char qr_uuid[UUID_LENGTH];
 
 // particle messaging
 char particle_register[PARTICLE_REGISTER_SIZE + 1];
 char particle_status[STATUS_LENGTH + 1];
+int transfer_type;
 
 struct Command {
     char arg[PARTICLE_ARG_SIZE + 1];
@@ -239,7 +258,7 @@ struct BrevitestAssayRecord {
     int duration;
     uint8_t BCODE_length;
     uint8_t BCODE_version;
-    char BCODE[BCODE_CAPACITY];
+    char BCODE[ASSAY_BCODE_CAPACITY];
 } *test_assay;
 
 int test_index;
