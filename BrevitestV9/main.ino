@@ -357,7 +357,7 @@ void store_assay(int index) {
 }
 
 int get_assay_record_by_uuid() {
-    int index = get_assay_index_by_uuid(particle_request.uuid);
+    int index = get_assay_index_by_uuid(particle_request.param);
     if (index == -1) {
       return -2;
     }
@@ -412,7 +412,7 @@ void store_test(int index) {
 }
 
 int get_test_record_by_uuid() {
-    int index = get_test_index_by_uuid(particle_request.uuid);
+    int index = get_test_index_by_uuid(particle_request.param);
     if (index == -1) {
       return -2;
     }
@@ -468,12 +468,12 @@ int get_param_value() {
 
     len = extract_int_from_string(particle_request.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
     if (len == 1) {
-        value8 += particle_request.index;
+        value8 += index;
         sprintf(particle_register, "%d", *value8);
     }
     else if (len == 2) {
-        if (particle_request.index % 2 == 0) {
-            value16 += particle_request.index;
+        if (index % 2 == 0) {
+            value16 += index;
             sprintf(particle_register, "%d", *value16);
         }
         else {
@@ -561,28 +561,11 @@ int get_serial_number() {
 
 int parse_particle_request(String msg) {
     int len = msg.length();
-    int param_length = len - REQUEST_PARAM_INDEX;
-
+    int param_length = len - PARTICLE_REQUEST_CODE_LENGTH;
     msg.toCharArray(particle_request.arg, len + 1);
 
-    particle_request.index = extract_int_from_string(particle_request.arg, REQUEST_INDEX_INDEX, REQUEST_INDEX_LENGTH);
-    if (particle_request.index == 0) { // first request
-        strncpy(particle_request.uuid, particle_request.arg, UUID_LENGTH);
-        particle_request.uuid[UUID_LENGTH] = '\0';
-    }
-    else {
-        if (strncmp(particle_request.arg, particle_request.uuid, UUID_LENGTH) != 0) {
-            ERROR_MESSAGE("Register uuid mismatch");
-            return -1;
-        }
-        if (particle_request.index == 999999) {
-            particle_register[0] = '\0';
-            return 0;
-        }
-    }
-
-    particle_request.code = extract_int_from_string(particle_request.arg, REQUEST_CODE_INDEX, REQUEST_CODE_LENGTH);
-    strncpy(particle_request.param, &particle_request.arg[REQUEST_PARAM_INDEX], param_length);
+    particle_request.code = extract_int_from_string(particle_request.arg, PARTICLE_REQUEST_CODE_INDEX, PARTICLE_REQUEST_CODE_LENGTH);
+    strncpy(particle_request.param, &particle_request.arg[PARTICLE_REQUEST_PARAM_INDEX], param_length);
     particle_request.param[param_length] = '\0';
 
     return 1;
@@ -591,17 +574,17 @@ int parse_particle_request(String msg) {
 int request_data(String msg) {
     if (parse_particle_request(msg) > 0) {
         switch (particle_request.code) {
-            case 0: // serial_number
+            case 1: // serial_number
                 return get_serial_number();
-            case 1: // get test record
+            case 2: // get test record
                 return get_test_record_by_uuid();
-            case 2: // get assay record
+            case 3: // get assay record
                 return get_assay_record_by_uuid();
-            case 3: // get params
+            case 4: // get params
                 return get_all_param_values();
-            case 4: // one parameter
-                return get_param_value();
             case 5: // one parameter
+                return get_param_value();
+            case 6: // one parameter
                 return get_QR_code_value();
         }
     }
@@ -649,6 +632,9 @@ int command_claim_device() {
     device_busy = true;
     memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
     assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
+    if (assay_index == -1) {
+        assay_index == 9999;
+    }
 
     return assay_index;
 }
@@ -714,7 +700,7 @@ int command_receive_packet() {
         return -303;
     }
 
-    if (data_transfer.index == data_transfer.message_size - 1); {   // last packet
+    if (data_transfer.index == data_transfer.message_size); {   // last packet
         switch (transfer_type) {
             case 1: // assay
                 load_assay_from_buffer();
@@ -746,6 +732,9 @@ int load_assay_from_buffer() {
     assay->BCODE_length = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_SIZE_INDEX, ASSAY_BUFFER_BCODE_SIZE_LENGTH);
     assay->BCODE_version = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_VERSION_INDEX, ASSAY_BUFFER_BCODE_VERSION_LENGTH);
     strncpy(assay->BCODE, &buf[ASSAY_BUFFER_BCODE_INDEX], ASSAY_BCODE_CAPACITY);
+
+    store_assay(assay_index);
+    return 1;
 }
 
 int load_test_from_buffer() {
@@ -760,6 +749,9 @@ int load_test_from_buffer() {
     memcpy(test->test_uuid, &buf[TEST_BUFFER_TEST_UUID_INDEX], UUID_LENGTH);
     memcpy(test->cartridge_uuid, &buf[TEST_BUFFER_CARTRIDGE_UUID_INDEX], UUID_LENGTH);
     memcpy(test->assay_uuid, &buf[TEST_BUFFER_ASSAY_UUID_INDEX], UUID_LENGTH);
+
+    store_test(test_index);
+    return 1;
 }
 
 int command_write_serial_number() {
@@ -853,9 +845,9 @@ void parse_particle_command(String msg) {
     int len = msg.length();
     msg.toCharArray(particle_command.arg, len + 1);
 
-    particle_command.code = extract_int_from_string(particle_command.arg, 0, PARTICLE_COMMAND_CODE_LENGTH);
+    particle_command.code = extract_int_from_string(particle_command.arg, PARTICLE_COMMAND_CODE_INDEX, PARTICLE_COMMAND_CODE_LENGTH);
     len -= PARTICLE_COMMAND_CODE_LENGTH;
-    strncpy(particle_command.param, &particle_command.arg[PARTICLE_COMMAND_CODE_LENGTH], len);
+    strncpy(particle_command.param, &particle_command.arg[PARTICLE_COMMAND_PARAM_INDEX], len);
     particle_command.param[len] = '\0';
 }
 
