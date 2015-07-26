@@ -120,7 +120,7 @@
 int pinLimitSwitch = A0;
 int pinSolenoid = A1;
 int pinQRPower = A2;
-//  A3 unassigned
+    //  A3 unassigned
 int pinSensorLED = A4;
 int pinDeviceLED = A5;
 int pinStepperSleep = D0;
