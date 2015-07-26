@@ -624,7 +624,9 @@ int command_cancel_brevitest() {
 }
 
 int command_claim_device() {
-    // param: user_uuid, assay_uuid
+    // param: user_uuid
+    int result;
+
     if (device_busy) {
         return -200;
     }
@@ -633,6 +635,10 @@ int command_claim_device() {
     memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
     assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
     if (assay_index == -1) {
+        result = get_QR_code_value();
+        if (result < 0) {
+            return result;
+        }
         assay_index == 9999;
     }
 
