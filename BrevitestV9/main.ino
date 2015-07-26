@@ -132,16 +132,7 @@ void move_to_calibration_point() {
 /////////////////////////////////////////////////////////////
 
 int scan_QR_code() {
-
-    // test code
-
-    char temp[] = "557c9076df2705463b0d7814";
-    strncpy(qr_uuid, temp, UUID_LENGTH);
-    return 0;
-
-    // actual code
-
-    /*unsigned long timeout;
+    unsigned long timeout;
     int buf, i;
 
     digitalWrite(pinQRPower, HIGH);
@@ -165,7 +156,7 @@ int scan_QR_code() {
         qr_uuid[i++] = (char) buf;
     } while (i < UUID_LENGTH && Serial1.available());
 
-    return 0;*/
+    return 0;
 }
 
 int validate_QR_code(char *uuid_to_validate) {
@@ -181,9 +172,7 @@ int validate_QR_code(char *uuid_to_validate) {
 
 int get_QR_code_value() {
     int scan_result = scan_QR_code();
-    Serial.print("scan_result: ");
-    Serial.println(scan_result);
-    Serial.println(qr_uuid);
+
     if (scan_result == 0) {
         memcpy(particle_register, qr_uuid, UUID_LENGTH);
         particle_register[UUID_LENGTH] = '\0';
@@ -341,10 +330,9 @@ void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
 /////////////////////////////////////////////////////////////
 
 int get_assay_index_by_uuid(char *uuid) {
-    Serial.println("get_assay_index_by_uuid");
-    Serial.println(uuid);
+    int i;
 
-    for (int i = 0; i < ASSAY_CACHE_SIZE; i += 1) {
+    for (i = 0; i < ASSAY_CACHE_SIZE; i += 1) {
         if (strncmp(uuid, eeprom.assay_cache[i].uuid, UUID_LENGTH) == 0) {
             return i;
         }
@@ -638,26 +626,20 @@ int command_cancel_brevitest() {
 int command_claim_device() {
     // param: user_uuid
     int result;
-    Serial.println("Claim device");
-    if(memcmp(claimant_uuid, &particle_command.param, UUID_LENGTH)) {
-        if (device_busy) {
-            return -200;
-        }
-        device_busy = true;
-        memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
+
+    if (device_busy) {
+        return -200;
     }
 
+    device_busy = true;
+    memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
     assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
-    Serial.print("assay_index: ");
-    Serial.println(assay_index);
     if (assay_index == -1) {
         result = get_QR_code_value();
-        Serial.print("result: ");
-        Serial.println(result);
         if (result < 0) {
             return result;
         }
-        assay_index = 9999;
+        assay_index == 9999;
     }
 
     return assay_index;
@@ -687,14 +669,8 @@ void initiate_data_transfer() {
     data_transfer.index = 0;
     data_transfer.packet_number = 0;
     memcpy(data_transfer.id, &particle_command.param[BUFFER_ID_INDEX], BUFFER_ID_LENGTH);
-    Serial.print("data_transfer.id: ");
-    Serial.println(data_transfer.id);
     data_transfer.number_of_packets = extract_int_from_string(particle_command.param, BUFFER_NUMBER_OF_PACKETS_INDEX, BUFFER_NUMBER_OF_PACKETS_LENGTH);
-    Serial.print("data_transfer.number_of_packets: ");
-    Serial.println(data_transfer.number_of_packets);
     data_transfer.message_size = extract_int_from_string(particle_command.param, BUFFER_MESSAGE_SIZE_INDEX, BUFFER_MESSAGE_SIZE_LENGTH);
-    Serial.print("data_transfer.message_size: ");
-    Serial.println(data_transfer.message_size);
 }
 
 int command_receive_packet() {
@@ -725,10 +701,8 @@ int command_receive_packet() {
     memcpy(&data_transfer.buffer[data_transfer.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], data_transfer.payload_size);
     data_transfer.index += data_transfer.payload_size;
 
-    if (data_transfer.index > data_transfer.message_size) {
+    if (data_transfer.index >= data_transfer.message_size); {
         ERROR_MESSAGE("Buffer payload not transferred properly");
-        ERROR_MESSAGE(data_transfer.index);
-        ERROR_MESSAGE(data_transfer.message_size);
         return -303;
     }
 
@@ -870,26 +844,6 @@ int command_read_QR_code() {
   return scan_QR_code();
 }
 
-/*int command_erase_assay_cache() {
-    return 0;
-}
-
-int command_erase_test_cache() {
-    return 0;
-}*/
-
-int command_dump_assay_cache() {
-    int index = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
-    index = (index < 0) ? 0 : (index > 1) ? 1 : index;
-    process_test_record(index);
-    Serial.println(particle_register);
-    return 0;
-}
-
-/*int command_dump_test_cache() {
-    return 0;
-}*/
-
 //
 //
 
@@ -953,14 +907,6 @@ int run_command(String msg) {
             return command_read_QR_code();
         case 56:
             return command_verify_QR_code();
-        /*case 57:
-            return command_erase_assay_cache();
-        case 58:
-            return command_erase_test_cache();*/
-        case 59:
-            return command_dump_assay_cache();
-        /*case 60:
-            return command_dump_test_cache();*/
         default:
             return -1;
     }
