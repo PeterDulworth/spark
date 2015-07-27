@@ -359,13 +359,19 @@ void write_assay_record_to_eeprom() {
 
 void store_assay(int index) {
     uint8_t *e = (uint8_t *) &eeprom.assay_cache[index];
+    uint8_t assay_count;
 
     for (int addr = ASSAY_CACHE_INDEX; addr < (ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH); addr++, e++) {
         EEPROM.write(addr, *e);
     }
-
-    eeprom.cache_count = eeprom.cache_count & 0x0F + ((index + 1) % ASSAY_CACHE_SIZE) << 4;
+    assay_count = (index + 1) % ASSAY_CACHE_SIZE;
+    Serial.println(assay_count);
+    eeprom.cache_count &= 0x0F;
+    eeprom.cache_count += (assay_count << 4);
     EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
+    Serial.println("eeprom.cache_count");
+    Serial.println(eeprom.cache_count & 0x0F);
+    Serial.println(eeprom.cache_count >> 4);
 }
 
 int get_assay_record_by_uuid() {
@@ -383,8 +389,8 @@ int process_assay_record(int index) {
 
     assay = &eeprom.assay_cache[index];
 
-    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%s\t%d\t%d\t%d\n%s\n", \
-        assay->uuid, assay->name, assay->duration, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
+    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%2u\t%s\t%5d\t%3u\t%3u\n%s\n", \
+        assay->uuid, assay->name_length, assay->name, assay->duration, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
 
     particle_register[len] = '\0';
     return 0;
@@ -426,7 +432,7 @@ void store_test(int index) {
 int get_test_record_by_uuid() {
     int index = get_test_index_by_uuid(particle_request.param);
     if (index == -1) {
-      return -2;
+      return -3;
     }
 
     return process_test_record(index);
@@ -670,6 +676,16 @@ int command_release_device() {
     return 1;
 }
 
+int command_check_assay_cache() {
+    int result = get_assay_index_by_uuid(particle_request.param);
+    return result == -1 ? 999 : result;
+}
+
+int command_check_test_cache() {
+    int result = get_test_index_by_uuid(particle_request.param);
+    return result == -1 ? 999 : result;
+}
+
 int command_start_assay_transfer() {
     transfer_type = 1;
     initiate_data_transfer();
@@ -703,6 +719,9 @@ int command_receive_packet() {
     // payload packet, contains packet number, packet length, packet id, and payload
 
     data_transfer.packet_number++;
+    Serial.print("data_transfer.packet_number: ");
+    Serial.println(data_transfer.packet_number);
+
     if (data_transfer.packet_number != extract_int_from_string(particle_command.param, BUFFER_PACKET_NUMBER_INDEX, BUFFER_PACKET_NUMBER_LENGTH)) {
         ERROR_MESSAGE("Data packet received out of order");
         ERROR_MESSAGE(particle_command.param);
@@ -722,8 +741,18 @@ int command_receive_packet() {
     }
 
     data_transfer.payload_size = extract_int_from_string(particle_command.param, BUFFER_PAYLOAD_SIZE_INDEX, BUFFER_PAYLOAD_SIZE_LENGTH);
+    Serial.print("data_transfer.payload_size: ");
+    Serial.println(data_transfer.payload_size);
+
     memcpy(&data_transfer.buffer[data_transfer.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], data_transfer.payload_size);
     data_transfer.index += data_transfer.payload_size;
+
+    Serial.print("data_transfer.buffer: ");
+    Serial.write((uint8_t *) data_transfer.buffer, data_transfer.index);
+    Serial.println();
+
+    Serial.print("data_transfer.index: ");
+    Serial.println(data_transfer.index);
 
     if (data_transfer.index > data_transfer.message_size) {
         ERROR_MESSAGE("Buffer payload not transferred properly");
@@ -732,7 +761,7 @@ int command_receive_packet() {
         return -303;
     }
 
-    if (data_transfer.index == data_transfer.message_size); {   // last packet
+    if (data_transfer.packet_number == data_transfer.number_of_packets); {   // last packet
         switch (transfer_type) {
             case 1: // assay
                 load_assay_from_buffer();
@@ -743,33 +772,62 @@ int command_receive_packet() {
             default:
                 return -305;
         }
-        return -1;
     }
 
     return data_transfer.packet_number;
 }
 
-int load_assay_from_buffer() {
+void load_assay_from_buffer() {
     BrevitestAssayRecord *assay;
     char *buf = data_transfer.buffer;
+    int index = UUID_LENGTH + ASSAY_BUFFER_NAME_LENGTH_LENGTH;
 
     assay_index = eeprom.cache_count >> 4;
     assay_index %= ASSAY_CACHE_SIZE;
+    Serial.print("assay_index: ");
+    Serial.println(assay_index);
 
     assay = &eeprom.assay_cache[assay_index];
 
     memcpy(assay->uuid, &buf[ASSAY_BUFFER_UUID_INDEX], UUID_LENGTH);
-    strncpy(assay->name, &buf[ASSAY_BUFFER_NAME_INDEX], ASSAY_NAME_MAX_LENGTH);
-    assay->duration = extract_int_from_string(buf, ASSAY_BUFFER_DURATION_INDEX, ASSAY_BUFFER_DURATION_LENGTH);
-    assay->BCODE_length = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_SIZE_INDEX, ASSAY_BUFFER_BCODE_SIZE_LENGTH);
-    assay->BCODE_version = extract_int_from_string(buf, ASSAY_BUFFER_BCODE_VERSION_INDEX, ASSAY_BUFFER_BCODE_VERSION_LENGTH);
-    strncpy(assay->BCODE, &buf[ASSAY_BUFFER_BCODE_INDEX], ASSAY_BCODE_CAPACITY);
+    Serial.print("assay->uuid: ");
+    Serial.write((uint8_t *) assay->uuid, UUID_LENGTH);
+    Serial.println();
+
+    assay->name_length = extract_int_from_string(buf, ASSAY_BUFFER_NAME_LENGTH_INDEX, ASSAY_BUFFER_NAME_LENGTH_LENGTH);
+    Serial.print("assay->name_length: ");
+    Serial.println(assay->name_length);
+
+    memcpy(assay->name, &buf[ASSAY_BUFFER_NAME_INDEX], assay->name_length);
+    assay->name[assay->name_length] = '\0';
+    Serial.print("assay->name: ");
+    Serial.println(assay->name);
+
+    index += assay->name_length;
+    assay->duration = extract_int_from_string(buf, index, ASSAY_BUFFER_DURATION_LENGTH);
+    Serial.print("assay->duration: ");
+    Serial.println(assay->duration);
+
+    index += ASSAY_BUFFER_DURATION_LENGTH;
+    assay->BCODE_length = extract_int_from_string(buf, index, ASSAY_BUFFER_BCODE_SIZE_LENGTH);
+    Serial.print("assay->BCODE_length: ");
+    Serial.println(assay->BCODE_length);
+
+    index += ASSAY_BUFFER_BCODE_SIZE_LENGTH;
+    assay->BCODE_version = extract_int_from_string(buf, index, ASSAY_BUFFER_BCODE_VERSION_LENGTH);
+    Serial.print("assay->BCODE_version: ");
+    Serial.println(assay->BCODE_version);
+
+    index += ASSAY_BUFFER_BCODE_VERSION_LENGTH;
+    strncpy(assay->BCODE, &buf[index], ASSAY_BCODE_CAPACITY);
+    assay->BCODE[assay->BCODE_length] = '\0';
+    Serial.print("assay->BCODE: ");
+    Serial.println(assay->BCODE);
 
     store_assay(assay_index);
-    return 1;
 }
 
-int load_test_from_buffer() {
+void load_test_from_buffer() {
     BrevitestTestRecord *test;
     char *buf = data_transfer.buffer;
 
@@ -783,7 +841,6 @@ int load_test_from_buffer() {
     memcpy(test->assay_uuid, &buf[TEST_BUFFER_ASSAY_UUID_INDEX], UUID_LENGTH);
 
     store_test(test_index);
-    return 1;
 }
 
 int command_write_serial_number() {
@@ -921,10 +978,14 @@ int run_command(String msg) {
         case 10: // process data transfer packet
             return command_receive_packet();
 
-        case 20: // satrt assay transfer
+        case 20: // start assay transfer
             return command_start_assay_transfer();
-        case 21: // satrt assay transfer
+        case 21: // start assay transfer
             return command_start_test_transfer();
+        case 22: // check assay cache
+            return command_check_assay_cache();
+        case 23: // check assay cache
+            return command_check_test_cache();
 
     // configuration functions
         case 30: // set device serial number
