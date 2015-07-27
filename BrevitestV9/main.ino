@@ -38,6 +38,23 @@ void store_eeprom() {
   }
 }
 
+void erase_eeprom() {
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++) {
+    EEPROM.write(addr, 0);
+  }
+}
+
+void dump_eeprom() {
+  uint8_t buf;
+
+  Serial.println("EEPROM contents: ");
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++) {
+    buf = EEPROM.read(addr);
+    Serial.print(buf);
+  }
+  Serial.println();
+}
+
 /////////////////////////////////////////////////////////////
 //                                                         //
 //                        SOLENOID                         //
@@ -572,8 +589,7 @@ void store_params() {
 /////////////////////////////////////////////////////////////
 
 int get_serial_number() {
-    memcpy(particle_register, eeprom.serial_number, EEPROM_SERIAL_NUMBER_LENGTH);
-    particle_register[EEPROM_SERIAL_NUMBER_LENGTH] = '\0';
+    memcpy(particle_register, eeprom.serial_number, EEPROM_SERIAL_NUMBER_LENGTH + 1); // includes trailing \0
     return 0;
 }
 
@@ -848,6 +864,8 @@ int command_write_serial_number() {
         eeprom.serial_number[i] = particle_command.param[i];
         EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + i, particle_command.param[i]);
     }
+    eeprom.serial_number[EEPROM_SERIAL_NUMBER_LENGTH] = '\0';
+    EEPROM.write(EEPROM_ADDR_SERIAL_NUMBER + EEPROM_SERIAL_NUMBER_LENGTH, 0);
     return 1;
 }
 
@@ -947,6 +965,16 @@ int command_dump_assay_cache() {
     return 0;
 }*/
 
+int command_dump_eeprom() {
+    dump_eeprom();
+    return 1;
+}
+
+int command_erase_eeprom() {
+    erase_eeprom();
+    return 1;
+}
+
 //
 //
 
@@ -998,6 +1026,10 @@ int run_command(String msg) {
             return command_get_firmware_version();
         case 34: // set and move to calibration point
             return command_set_and_move_to_calibration_point();
+        case 35: // dump eeprom to serial port
+            return command_dump_eeprom();
+        case 36: // erase eeprom from flash
+            return command_erase_eeprom();
 
       // test functions
         case 50:
@@ -1270,6 +1302,15 @@ void setup() {
   Serial1.begin(115200);  // QR scanner interface through RX/TX pins
 
   load_eeprom();
+
+  if (eeprom.firmware_version != FIRMWARE_VERSION) {
+      EEPROM.write(EEPROM_ADDR_FIRMWARE_VERSION, FIRMWARE_VERSION);
+      eeprom.firmware_version = FIRMWARE_VERSION;
+  }
+  if (eeprom.data_format_version != DATA_FORMAT_VERSION) {
+      EEPROM.write(EEPROM_ADDR_DATA_FORMAT_VERSION, DATA_FORMAT_VERSION);
+      eeprom.firmware_version = DATA_FORMAT_VERSION;
+}
 
   device_busy = false;
   start_test = false;

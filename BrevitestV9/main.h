@@ -265,7 +265,7 @@ struct EEPROM {
   uint8_t data_format_version;
   uint8_t cache_count; // assay << 4 + test
   uint8_t reserved[5];
-  char serial_number[EEPROM_SERIAL_NUMBER_LENGTH + 1];
+  char serial_number[EEPROM_SERIAL_NUMBER_LENGTH + 1]; // includes trailing \0
   Param param;
   BrevitestAssayRecord assay_cache[ASSAY_CACHE_SIZE];
   BrevitestTestRecord test_cache[TEST_CACHE_SIZE];
