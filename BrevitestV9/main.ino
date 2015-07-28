@@ -45,12 +45,19 @@ void erase_eeprom() {
 }
 
 void dump_eeprom() {
+  uint8_t *e = (uint8_t *) &eeprom;
   uint8_t buf;
 
   Serial.println("EEPROM contents: ");
   for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++) {
     buf = EEPROM.read(addr);
-    Serial.print(buf);
+    Serial.write(buf);
+  }
+  Serial.println();
+
+  Serial.println("eeprom contents: ");
+  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++) {
+    Serial.write(*e++);
   }
   Serial.println();
 }
@@ -153,6 +160,7 @@ int scan_QR_code() {
     // test code
 
     char temp[] = "557c9076df2705463b0d7814";
+    /*char temp[] = "557c907edf2705463b0d7819";*/
     strncpy(qr_uuid, temp, UUID_LENGTH);
     return 0;
 
@@ -361,8 +369,15 @@ int get_assay_index_by_uuid(char *uuid) {
     Serial.println("get_assay_index_by_uuid");
     Serial.println(uuid);
 
+    if (uuid[0] == '\0') {
+      return -1;
+    }
+
     for (int i = 0; i < ASSAY_CACHE_SIZE; i += 1) {
-        if (strncmp(uuid, eeprom.assay_cache[i].uuid, UUID_LENGTH) == 0) {
+      Serial.println(eeprom.assay_cache[i].uuid);
+        if (memcmp(uuid, eeprom.assay_cache[i].uuid, UUID_LENGTH) == 0) {
+            Serial.print("Assay found, index=");
+            Serial.println(i);
             return i;
         }
     }
@@ -375,10 +390,11 @@ void write_assay_record_to_eeprom() {
 }
 
 void store_assay(int index) {
-    uint8_t *e = (uint8_t *) &eeprom.assay_cache[index];
+    uint8_t *e = (uint8_t *) &eeprom.assay_cache[index].uuid;
     uint8_t assay_count;
+    int start_addr = ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH;
 
-    for (int addr = ASSAY_CACHE_INDEX; addr < (ASSAY_CACHE_INDEX + index * ASSAY_RECORD_LENGTH); addr++, e++) {
+    for (int addr = start_addr; addr < (start_addr + ASSAY_RECORD_LENGTH); addr++, e++) {
         EEPROM.write(addr, *e);
     }
     assay_count = (index + 1) % ASSAY_CACHE_SIZE;
@@ -406,7 +422,7 @@ int process_assay_record(int index) {
 
     assay = &eeprom.assay_cache[index];
 
-    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%24s\t%2u\t%s\t%5d\t%3u\t%3u\n%s\n", \
+    len = snprintf(particle_register, PARTICLE_REGISTER_SIZE, "%.24s\t%2u\t%s\t%5d\t%3u\t%3u\n%s\n", \
         assay->uuid, assay->name_length, assay->name, assay->duration, assay->BCODE_length, assay->BCODE_version, assay->BCODE);
 
     particle_register[len] = '\0';
@@ -693,12 +709,12 @@ int command_release_device() {
 }
 
 int command_check_assay_cache() {
-    int result = get_assay_index_by_uuid(particle_request.param);
+    int result = get_assay_index_by_uuid(particle_command.param);
     return result == -1 ? 999 : result;
 }
 
 int command_check_test_cache() {
-    int result = get_test_index_by_uuid(particle_request.param);
+    int result = get_test_index_by_uuid(particle_command.param);
     return result == -1 ? 999 : result;
 }
 
@@ -761,7 +777,6 @@ int command_receive_packet() {
     Serial.println(data_transfer.payload_size);
 
     memcpy(&data_transfer.buffer[data_transfer.index], &particle_command.param[BUFFER_PAYLOAD_INDEX], data_transfer.payload_size);
-    data_transfer.index += data_transfer.payload_size;
 
     Serial.print("data_transfer.buffer: ");
     Serial.write((uint8_t *) data_transfer.buffer, data_transfer.index);
@@ -777,7 +792,7 @@ int command_receive_packet() {
         return -303;
     }
 
-    if (data_transfer.packet_number == data_transfer.number_of_packets); {   // last packet
+    if (data_transfer.packet_number == data_transfer.number_of_packets) {   // last packet
         switch (transfer_type) {
             case 1: // assay
                 load_assay_from_buffer();
@@ -789,6 +804,8 @@ int command_receive_packet() {
                 return -305;
         }
     }
+
+    data_transfer.index += data_transfer.payload_size;
 
     return data_transfer.packet_number;
 }
@@ -814,12 +831,12 @@ void load_assay_from_buffer() {
     Serial.print("assay->name_length: ");
     Serial.println(assay->name_length);
 
-    memcpy(assay->name, &buf[ASSAY_BUFFER_NAME_INDEX], assay->name_length);
+    memcpy(assay->name, &buf[ASSAY_BUFFER_NAME_INDEX], ASSAY_NAME_MAX_LENGTH);
     assay->name[assay->name_length] = '\0';
     Serial.print("assay->name: ");
     Serial.println(assay->name);
 
-    index += assay->name_length;
+    index += ASSAY_NAME_MAX_LENGTH;
     assay->duration = extract_int_from_string(buf, index, ASSAY_BUFFER_DURATION_LENGTH);
     Serial.print("assay->duration: ");
     Serial.println(assay->duration);
@@ -835,8 +852,8 @@ void load_assay_from_buffer() {
     Serial.println(assay->BCODE_version);
 
     index += ASSAY_BUFFER_BCODE_VERSION_LENGTH;
+    buf[index + assay->BCODE_length + 1] = '\0';
     strncpy(assay->BCODE, &buf[index], ASSAY_BCODE_CAPACITY);
-    assay->BCODE[assay->BCODE_length] = '\0';
     Serial.print("assay->BCODE: ");
     Serial.println(assay->BCODE);
 
@@ -1303,14 +1320,34 @@ void setup() {
 
   load_eeprom();
 
+  Serial.print("firmware_version: ");
+  Serial.println(eeprom.firmware_version);
   if (eeprom.firmware_version != FIRMWARE_VERSION) {
-      EEPROM.write(EEPROM_ADDR_FIRMWARE_VERSION, FIRMWARE_VERSION);
-      eeprom.firmware_version = FIRMWARE_VERSION;
+    EEPROM.write(EEPROM_ADDR_FIRMWARE_VERSION, FIRMWARE_VERSION);
+    eeprom.firmware_version = FIRMWARE_VERSION;
+    Serial.print("new firmware_version: ");
+    Serial.println(eeprom.firmware_version);
   }
+
+  Serial.print("data_format_version: ");
+  Serial.println(eeprom.data_format_version);
   if (eeprom.data_format_version != DATA_FORMAT_VERSION) {
-      EEPROM.write(EEPROM_ADDR_DATA_FORMAT_VERSION, DATA_FORMAT_VERSION);
-      eeprom.firmware_version = DATA_FORMAT_VERSION;
-}
+    EEPROM.write(EEPROM_ADDR_DATA_FORMAT_VERSION, DATA_FORMAT_VERSION);
+    eeprom.data_format_version = DATA_FORMAT_VERSION;
+    Serial.print("new data_format_version: ");
+    Serial.println(eeprom.data_format_version);
+  }
+
+  Serial.print("sizeof(Param): ");
+  Serial.println(sizeof(Param));
+  Serial.print("sizeof(BrevitestSensorRecord): ");
+  Serial.println(sizeof(BrevitestSensorRecord));
+  Serial.print("sizeof(BrevitestTestRecord): ");
+  Serial.println(sizeof(BrevitestTestRecord));
+  Serial.print("sizeof(BrevitestAssayRecord): ");
+  Serial.println(sizeof(BrevitestAssayRecord));
+  Serial.print("sizeof(eeprom): ");
+  Serial.println(sizeof(eeprom));
 
   device_busy = false;
   start_test = false;

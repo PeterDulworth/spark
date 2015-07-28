@@ -4,33 +4,33 @@
 // GLOBAL VARIABLES AND DEFINES
 
 // general constants
-#define FIRMWARE_VERSION 0x09
-#define DATA_FORMAT_VERSION 0x01
+#define FIRMWARE_VERSION 9
+#define DATA_FORMAT_VERSION 1
 #define UUID_LENGTH 24
 #define ERROR_MESSAGE(err) Serial.println(err)
 #define CANCELLABLE(x) if (!cancel_process) {x}
 
 // eeprom
-#define EEPROM_ADDR_FIRMWARE_VERSION 0
-#define EEPROM_ADDR_DATA_FORMAT_VERSION 1
-#define EEPROM_ADDR_CACHE_COUNT 2
-#define EEPROM_ADDR_SERIAL_NUMBER 8
+#define EEPROM_ADDR_FIRMWARE_VERSION offsetof(Particle_EEPROM, firmware_version)
+#define EEPROM_ADDR_DATA_FORMAT_VERSION offsetof(Particle_EEPROM, data_format_version)
+#define EEPROM_ADDR_CACHE_COUNT offsetof(Particle_EEPROM, cache_count)
+#define EEPROM_ADDR_SERIAL_NUMBER offsetof(Particle_EEPROM, serial_number)
 #define EEPROM_SERIAL_NUMBER_LENGTH 19
-#define EEPROM_ADDR_PARAM 28
+#define EEPROM_ADDR_PARAM offsetof(Particle_EEPROM, param)
 #define EEPROM_PARAM_LENGTH 18
 #define EEPROM_PARAM_COUNT 10
-#define EEPROM_OFFSET_PARAM_RESET_STEPS 0
-#define EEPROM_OFFSET_PARAM_STEP_DELAY_US 2
-#define EEPROM_OFFSET_PARAM_WIFI_PING_RATE 4
-#define EEPROM_OFFSET_PARAM_STEPPER_WAKE_DELAY_MS 6
-#define EEPROM_OFFSET_PARAM_SOLENOID_SURGE_POWER 8
-#define EEPROM_OFFSET_PARAM_SOLENOID_SUSTAIN_POWER 9
-#define EEPROM_OFFSET_PARAM_SOLENOID_SURGE_PERIOD_MS 10
-#define EEPROM_OFFSET_PARAM_DELAY_BETWEEN_SAMPLES 12
-#define EEPROM_OFFSET_PARAM_SENSOR_PARAMS 14
-#define EEPROM_OFFSET_PARAM_CALIBRATION_STEPS 16
-#define EEPROM_ADDR_ASSAY_CACHE 70
-#define EEPROM_ADDR_TEST_CACHE 1238
+#define EEPROM_OFFSET_PARAM_RESET_STEPS offsetof(Particle_EEPROM, param.reset_steps)
+#define EEPROM_OFFSET_PARAM_STEP_DELAY_US offsetof(Particle_EEPROM, param.step_delay_us)
+#define EEPROM_OFFSET_PARAM_WIFI_PING_RATE offsetof(Particle_EEPROM, param.wifi_ping_rate)
+#define EEPROM_OFFSET_PARAM_STEPPER_WAKE_DELAY_MS offsetof(Particle_EEPROM, param.stepper_wake_delay_ms)
+#define EEPROM_OFFSET_PARAM_SOLENOID_SURGE_POWER offsetof(Particle_EEPROM, param.solenoid_surge_power)
+#define EEPROM_OFFSET_PARAM_SOLENOID_SUSTAIN_POWER offsetof(Particle_EEPROM, param.solenoid_sustain_power)
+#define EEPROM_OFFSET_PARAM_SOLENOID_SURGE_PERIOD_MS offsetof(Particle_EEPROM, param.solenoid_surge_period_ms)
+#define EEPROM_OFFSET_PARAM_DELAY_BETWEEN_SAMPLES offsetof(Particle_EEPROM, param.delay_between_sensor_readings_ms)
+#define EEPROM_OFFSET_PARAM_SENSOR_PARAMS offsetof(Particle_EEPROM, param.sensor_params)
+#define EEPROM_OFFSET_PARAM_CALIBRATION_STEPS offsetof(Particle_EEPROM, param.calibration_steps)
+#define EEPROM_ADDR_ASSAY_CACHE offsetof(Particle_EEPROM, assay_cache)
+#define EEPROM_ADDR_TEST_CACHE offsetof(Particle_EEPROM, test_cache)
 
 // sensors
 #define SENSOR_NUMBER_OF_SAMPLES 10
@@ -63,12 +63,12 @@
 // caches
 #define CACHE_COUNT_INDEX 2
 #define ASSAY_CACHE_SIZE 2
-#define ASSAY_CACHE_INDEX 70
-#define ASSAY_RECORD_LENGTH 584
-#define TEST_CACHE_SIZE 5
-#define TEST_CACHE_INDEX 1238
-#define TEST_RECORD_LENGTH 162
-#define CACHE_SIZE_BYTES 2048
+#define ASSAY_CACHE_INDEX offsetof(Particle_EEPROM, assay_cache)
+#define ASSAY_RECORD_LENGTH sizeof(BrevitestAssayRecord)
+#define TEST_CACHE_SIZE 4
+#define TEST_CACHE_INDEX offsetof(Particle_EEPROM, test_cache)
+#define TEST_RECORD_LENGTH sizeof(BrevitestTestRecord)
+#define CACHE_SIZE_BYTES sizeof(Particle_EEPROM)
 
 // particle
 #define PARTICLE_REGISTER_SIZE 622
@@ -260,11 +260,12 @@ struct BrevitestAssayRecord {
 int test_index;
 int assay_index;
 
-struct EEPROM {
+struct Particle_EEPROM {
   uint8_t firmware_version;
   uint8_t data_format_version;
   uint8_t cache_count; // assay << 4 + test
-  uint8_t reserved[5];
+  uint8_t reserved1;
+  uint8_t reserved2[4];
   char serial_number[EEPROM_SERIAL_NUMBER_LENGTH + 1]; // includes trailing \0
   Param param;
   BrevitestAssayRecord assay_cache[ASSAY_CACHE_SIZE];
