@@ -37,9 +37,6 @@
 
 // assay
 #define ASSAY_NAME_MAX_LENGTH 63
-#define ASSAY_PACKETS_INDEX 0
-#define ASSAY_PACKETS_LENGTH 2
-#define ASSAY_UUID_INDEX (ASSAY_PACKETS_INDEX + ASSAY_PACKETS_LENGTH)
 #define ASSAY_BCODE_CAPACITY 489
 
 // buffer mappings
@@ -51,9 +48,19 @@
 #define ASSAY_BUFFER_BCODE_SIZE_LENGTH 3
 #define ASSAY_BUFFER_BCODE_VERSION_LENGTH 3
 
-#define TEST_BUFFER_TEST_UUID_INDEX 0
+#define TEST_BUFFER_START_TIME_INDEX 0
+#define TEST_BUFFER_START_TIME_LENGTH 11
+#define TEST_BUFFER_FINISH_TIME_INDEX (TEST_BUFFER_START_TIME_INDEX + TEST_BUFFER_START_TIME_LENGTH)
+#define TEST_BUFFER_FINISH_TIME_LENGTH 11
+#define TEST_BUFFER_TEST_UUID_INDEX (TEST_BUFFER_FINISH_TIME_INDEX + TEST_BUFFER_FINISH_TIME_LENGTH)
 #define TEST_BUFFER_CARTRIDGE_UUID_INDEX (TEST_BUFFER_TEST_UUID_INDEX + UUID_LENGTH)
 #define TEST_BUFFER_ASSAY_UUID_INDEX (TEST_BUFFER_CARTRIDGE_UUID_INDEX + UUID_LENGTH)
+#define TEST_BUFFER_PARAM_INDEX (TEST_BUFFER_ASSAY_UUID_INDEX + UUID_LENGTH)
+#define TEST_BUFFER_PARAM_LENGTH sizeof(Param)
+#define TEST_BUFFER_INITIAL_ASSAY_SENSOR_INDEX (TEST_BUFFER_PARAM_INDEX + TEST_BUFFER_PARAM_LENGTH)
+#define TEST_BUFFER_INITIAL_CONTROL_SENSOR_INDEX (TEST_BUFFER_INITIAL_ASSAY_SENSOR_INDEX + SENSOR_RECORD_LENGTH)
+#define TEST_BUFFER_FINAL_ASSAY_SENSOR_INDEX (TEST_BUFFER_INITIAL_CONTROL_SENSOR_INDEX + SENSOR_RECORD_LENGTH)
+#define TEST_BUFFER_FINAL_CONTROL_SENSOR_INDEX (TEST_BUFFER_FINAL_ASSAY_SENSOR_INDEX + SENSOR_RECORD_LENGTH)
 
 // params
 #define PARAM_CHANGE_INDEX 2
@@ -68,6 +75,7 @@
 #define TEST_CACHE_SIZE 4
 #define TEST_CACHE_INDEX offsetof(Particle_EEPROM, test_cache)
 #define TEST_RECORD_LENGTH sizeof(BrevitestTestRecord)
+#define SENSOR_RECORD_LENGTH sizeof(BrevitestSensorRecord)
 #define CACHE_SIZE_BYTES sizeof(Particle_EEPROM)
 
 // particle
@@ -93,7 +101,9 @@
 #define BUFFER_PAYLOAD_INDEX (BUFFER_ID_INDEX + BUFFER_ID_LENGTH)
 #define BUFFER_PAYLOAD_MAX_LENGTH (PARTICLE_ARG_SIZE - PARTICLE_COMMAND_CODE_LENGTH - BUFFER_PAYLOAD_INDEX)
 // first packet payload
-#define BUFFER_MESSAGE_SIZE_INDEX BUFFER_PAYLOAD_INDEX
+#define BUFFER_MESSAGE_TYPE_INDEX BUFFER_PAYLOAD_INDEX
+#define BUFFER_MESSAGE_TYPE_LENGTH 2
+#define BUFFER_MESSAGE_SIZE_INDEX (BUFFER_MESSAGE_TYPE_INDEX + BUFFER_MESSAGE_TYPE_LENGTH)
 #define BUFFER_MESSAGE_SIZE_LENGTH 3
 #define BUFFER_NUMBER_OF_PACKETS_INDEX (BUFFER_MESSAGE_SIZE_INDEX + BUFFER_MESSAGE_SIZE_LENGTH)
 #define BUFFER_NUMBER_OF_PACKETS_LENGTH 2
@@ -131,7 +141,6 @@ int pinControlSCL = D6;
 int pinQRTrigger = D7;
 
 // global variables
-bool device_busy;
 bool test_in_progress;
 bool start_test;
 bool cancel_process;
@@ -146,13 +155,14 @@ struct DeviceLED {
 
 // buffer
 struct BrevitestBuffer {
-    int packet_number;
-    int payload_size;
-    int index;
-    char id[BUFFER_ID_LENGTH];
-    int message_size;
-    int number_of_packets;
-    char buffer[BUFFER_SIZE];
+  int message_type;
+  int packet_number;
+  int payload_size;
+  int index;
+  char id[BUFFER_ID_LENGTH];
+  int message_size;
+  int number_of_packets;
+  char buffer[BUFFER_SIZE];
 } data_transfer;
 
 // sensors
@@ -165,7 +175,7 @@ int test_percent_complete;
 unsigned long test_last_progress_update;
 
 // uuids
-char request_uuid[UUID_LENGTH];
+char user_uuid[UUID_LENGTH];
 char claimant_uuid[UUID_LENGTH];
 char test_uuid[UUID_LENGTH];
 char qr_uuid[UUID_LENGTH];
