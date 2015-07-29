@@ -206,9 +206,6 @@ int validate_QR_code(char *uuid_to_validate) {
 
 int get_QR_code_value() {
     int scan_result = scan_QR_code();
-    Serial.print("scan_result: ");
-    Serial.println(scan_result);
-    Serial.println(qr_uuid);
     if (scan_result == 0) {
         memcpy(particle_register, qr_uuid, UUID_LENGTH);
         particle_register[UUID_LENGTH] = '\0';
@@ -1212,6 +1209,8 @@ int process_BCODE(int start_index) {
 
     Spark.process();
     index = get_BCODE_token(start_index, &cmd);
+    Serial.print("Processing ");
+    Serial.println(cmd);
     if ((start_index == 0) && (cmd != 0)) { // first command
         cancel_process = true;
         ERROR_MESSAGE(-15);
@@ -1305,7 +1304,7 @@ void do_run_test() {
     analogWrite(pinSolenoid, 0);
     analogWrite(pinSensorLED, 0);
 
-    if (validate_QR_code(eeprom.test_cache[test_index].cartridge_uuid)) {
+    if (validate_QR_code(eeprom.test_cache[test_index].cartridge_uuid) == 0) {
       move_to_calibration_point();
       process_BCODE(0);
 
