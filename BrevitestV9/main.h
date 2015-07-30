@@ -88,7 +88,7 @@
 #define PARTICLE_REQUEST_CODE_INDEX 0
 #define PARTICLE_REQUEST_CODE_LENGTH 2
 #define PARTICLE_REQUEST_PARAM_INDEX (PARTICLE_REQUEST_CODE_INDEX + PARTICLE_REQUEST_CODE_LENGTH)
-
+#define PARTICLE_PUBLISH_INTERVAL 1000
 
 // buffer
 #define BUFFER_SIZE 600
@@ -233,7 +233,7 @@ struct Param {
     solenoid_surge_period_ms = 300;
     delay_between_sensor_readings_ms = 500;
     sensor_params = (TCS34725_GAIN_4X << 8) + TCS34725_INTEGRATIONTIME_700MS;
-    calibration_steps = 14000;
+    calibration_steps = 250;
   }
 };
 

@@ -325,9 +325,16 @@ void convert_samples_to_reading(int reading_code, char sensor_code) {
     reading->red_norm = reading->green_norm = reading->blue_norm = 0;
     for (j = 1; j < SENSOR_NUMBER_OF_SAMPLES - 1; j += 1) {
         i = index[j];
-        reading->red_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].red)) / (int) buffer[i].clear;
-        reading->green_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].green)) / (int) buffer[i].clear;
-        reading->blue_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].blue)) / (int) buffer[i].clear;
+        if (buffer[i].clear == 0) {
+          reading->red_norm += 0;
+          reading->green_norm += 0;
+          reading->blue_norm += 0;
+        }
+        else {
+          reading->red_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].red)) / (int) buffer[i].clear;
+          reading->green_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].green)) / (int) buffer[i].clear;
+          reading->blue_norm += (10000 * ((int) buffer[i].clear - (int) buffer[i].blue)) / (int) buffer[i].clear;
+        }
     }
     reading->red_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
     reading->green_norm /= SENSOR_NUMBER_OF_SAMPLES - 2;
@@ -369,8 +376,6 @@ int get_assay_index_by_uuid(char *uuid) {
 
     for (int i = 0; i < ASSAY_CACHE_SIZE; i += 1) {
         if (memcmp(uuid, eeprom.assay_cache[i].uuid, UUID_LENGTH) == 0) {
-            Serial.print("Assay found, index=");
-            Serial.println(i);
             return i;
         }
     }
@@ -431,8 +436,6 @@ int get_test_index_by_uuid(char *uuid) {
 
     for (int i = 0; i < TEST_CACHE_SIZE; i += 1) {
         if (memcmp(uuid, eeprom.test_cache[i].test_uuid, UUID_LENGTH) == 0) {
-            Serial.print("Test found, index=");
-            Serial.println(i);
             return i;
         }
     }
@@ -1066,7 +1069,7 @@ int get_BCODE_token(int index, int *token) {
 
 void update_progress(char *message, int duration) {
     unsigned long now = millis();
-    int test_duration = eeprom.assay_cache[assay_index].duration;
+    int test_duration = eeprom.assay_cache[assay_index].duration * 1000;
     char *test_uuid = test_record->test_uuid;
 
     if (!cancel_process) {
@@ -1084,8 +1087,7 @@ void update_progress(char *message, int duration) {
         }
 
         STATUS("%s\n%.24s\n%d", message, test_uuid, test_percent_complete);
-        Serial.println(particle_status);
-        if (now - test_last_progress_update < 1000) {
+        if (now - test_last_progress_update < PARTICLE_PUBLISH_INTERVAL) {
             return;
         }
         else {
@@ -1209,8 +1211,6 @@ int process_BCODE(int start_index) {
 
     Spark.process();
     index = get_BCODE_token(start_index, &cmd);
-    Serial.print("Processing ");
-    Serial.println(cmd);
     if ((start_index == 0) && (cmd != 0)) { // first command
         cancel_process = true;
         ERROR_MESSAGE(-15);
@@ -1275,6 +1275,7 @@ void setup() {
   if (eeprom.data_format_version != DATA_FORMAT_VERSION) {
     EEPROM.write(EEPROM_ADDR_DATA_FORMAT_VERSION, DATA_FORMAT_VERSION);
     eeprom.data_format_version = DATA_FORMAT_VERSION;
+    reset_params();
   }
 
   start_test = false;
@@ -1305,6 +1306,7 @@ void do_run_test() {
     analogWrite(pinSensorLED, 0);
 
     if (validate_QR_code(eeprom.test_cache[test_index].cartridge_uuid) == 0) {
+      memcpy(&test_record->param, &eeprom.param, EEPROM_PARAM_LENGTH);
       move_to_calibration_point();
       process_BCODE(0);
 
