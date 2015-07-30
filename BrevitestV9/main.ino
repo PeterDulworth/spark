@@ -582,7 +582,7 @@ int reset_params() {
 void load_params() {
   uint8_t *e = (uint8_t *) &eeprom.param;
 
-  for (int addr = 0; addr < CACHE_SIZE_BYTES; addr++, e++) {
+  for (int addr = EEPROM_ADDR_PARAM; addr < (EEPROM_ADDR_PARAM + EEPROM_PARAM_LENGTH); addr++, e++) {
     *e = EEPROM.read(addr);
   }
 }
@@ -707,6 +707,26 @@ int command_check_assay_cache() {
 int command_check_test_cache() {
     int result = get_test_index_by_uuid(particle_command.param);
     return result == -1 ? 999 : result;
+}
+
+int command_list_assay_cache_uuids() {
+  int index;
+  for (int i = 0; i < ASSAY_CACHE_SIZE; i++) {
+    index = i * (UUID_LENGTH + 1);
+    memcpy(&particle_register[index], eeprom.assay_cache[i].uuid, UUID_LENGTH);
+    particle_register[index + UUID_LENGTH] = '\n';
+  }
+  return 0;
+}
+
+int command_list_test_cache_uuids() {
+  int index;
+  for (int i = 0; i < TEST_CACHE_SIZE; i++) {
+    index = i * (UUID_LENGTH + 1);
+    memcpy(&particle_register[index], eeprom.test_cache[i].test_uuid, UUID_LENGTH);
+    particle_register[index + UUID_LENGTH] = '\n';
+  }
+  return 0;
 }
 
 int command_start_transfer() {
@@ -980,6 +1000,10 @@ int run_command(String msg) {
             return command_check_assay_cache();
         case 21: // check test cache
             return command_check_test_cache();
+        case 22: // dump assay cache uuids to register
+            return command_list_assay_cache_uuids();
+        case 23: // dump test cache uuids to register
+            return command_list_test_cache_uuids();
 
     // configuration functions
         case 30: // set device serial number
