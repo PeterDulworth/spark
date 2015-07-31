@@ -204,18 +204,6 @@ int validate_QR_code(char *uuid_to_validate) {
     }
 }
 
-int get_QR_code_value() {
-    int scan_result = scan_QR_code();
-    if (scan_result == 0) {
-        memcpy(particle_register, qr_uuid, UUID_LENGTH);
-        particle_register[UUID_LENGTH] = '\0';
-        return 0;
-    }
-    else {
-        return scan_result;
-    }
-}
-
 /////////////////////////////////////////////////////////////
 //                                                         //
 //                       DEVICE LED                        //
@@ -369,7 +357,7 @@ void read_sensors(int reading_code) { // 0 -> initial baseline, 1 -> assay
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int get_assay_index_by_uuid(char *uuid) {
+int find_assay_index_by_uuid(char *uuid) {
     if (uuid[0] == '\0') {
       return -1;
     }
@@ -401,15 +389,6 @@ void store_assay(int index) {
     EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
 }
 
-int get_assay_record_by_uuid() {
-    int index = get_assay_index_by_uuid(particle_request.param);
-    if (index == -1) {
-      return -2;
-    }
-
-    return process_assay_record(index);
-}
-
 int process_assay_record(int index) {
     BrevitestAssayRecord *assay;
     int len;
@@ -429,7 +408,7 @@ int process_assay_record(int index) {
 //                                                         //
 /////////////////////////////////////////////////////////////
 
-int get_test_index_by_uuid(char *uuid) {
+int find_test_index_by_uuid(char *uuid) {
     if (uuid[0] == '\0') {
       return -1;
     }
@@ -457,15 +436,6 @@ void store_test(int index) {
   eeprom.cache_count &= 0xF0;
   eeprom.cache_count += (index + 1) % TEST_CACHE_SIZE;
   EEPROM.write(CACHE_COUNT_INDEX, eeprom.cache_count);
-}
-
-int get_test_record_by_uuid() {
-    int index = get_test_index_by_uuid(particle_request.param);
-    if (index == -1) {
-      return -3;
-    }
-
-    return process_test_record(index);
 }
 
 int process_test_record(int index) {
@@ -500,52 +470,6 @@ int process_test_record(int index) {
 //                         PARAMS                          //
 //                                                         //
 /////////////////////////////////////////////////////////////
-
-int get_param_value() {
-    int index, len;
-    uint16_t *value16 = &eeprom.param.reset_steps;
-    uint8_t *value8 = (uint8_t *) &eeprom.param.reset_steps;
-
-    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
-    if (index < 0) {
-      return -150;
-    }
-    if (index >= EEPROM_PARAM_LENGTH) {
-      return -151;
-    }
-
-    len = extract_int_from_string(particle_request.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
-    if (len == 1) {
-        value8 += index;
-        sprintf(particle_register, "%d", *value8);
-    }
-    else if (len == 2) {
-        if (index % 2 == 0) {
-            value16 += index;
-            sprintf(particle_register, "%d", *value16);
-        }
-        else {
-            return -147;
-        }
-    }
-    else {
-        return -148;
-    }
-
-    return 0;
-}
-
-int get_all_param_values() {
-    uint16_t *value = &eeprom.param.reset_steps;
-    int i, len, index = 0;
-
-    for (i = 0; i < EEPROM_PARAM_LENGTH; i += 2) {
-        index += sprintf(&particle_register[index], "%d,", *value);
-    }
-    particle_register[--index] = '\0';
-
-    return 0;
-}
 
 int change_byte_param(int index, int value) {
     uint8_t *addr = (uint8_t *) &eeprom.param.reset_steps;
@@ -606,6 +530,112 @@ int get_serial_number() {
     return 0;
 }
 
+int get_test_record_by_uuid() {
+    int index = find_test_index_by_uuid(particle_request.param);
+    if (index == -1) {
+      return -3;
+    }
+
+    return process_test_record(index);
+}
+
+int get_assay_record_by_uuid() {
+    int index = find_assay_index_by_uuid(particle_request.param);
+    if (index == -1) {
+      return -2;
+    }
+
+    return process_assay_record(index);
+}
+
+int get_param_value() {
+    int index, len;
+    uint16_t *value16 = &eeprom.param.reset_steps;
+    uint8_t *value8 = (uint8_t *) &eeprom.param.reset_steps;
+
+    index = extract_int_from_string(particle_command.param, 0, PARAM_CHANGE_INDEX);
+    if (index < 0) {
+      return -150;
+    }
+    if (index >= EEPROM_PARAM_LENGTH) {
+      return -151;
+    }
+
+    len = extract_int_from_string(particle_request.param, PARAM_CHANGE_INDEX, PARAM_CHANGE_LENGTH);
+    if (len == 1) {
+        value8 += index;
+        sprintf(particle_register, "%d", *value8);
+    }
+    else if (len == 2) {
+        if (index % 2 == 0) {
+            value16 += index;
+            sprintf(particle_register, "%d", *value16);
+        }
+        else {
+            return -147;
+        }
+    }
+    else {
+        return -148;
+    }
+
+    return 0;
+}
+
+int get_all_param_values() {
+    uint16_t *value = &eeprom.param.reset_steps;
+    int i, len, index = 0;
+
+    for (i = 0; i < EEPROM_PARAM_LENGTH; i += 2) {
+        index += sprintf(&particle_register[index], "%d,", *value);
+    }
+    particle_register[--index] = '\0';
+
+    return 0;
+}
+
+int get_QR_code_value() {
+    int scan_result = scan_QR_code();
+    if (scan_result == 0) {
+        memcpy(particle_register, qr_uuid, UUID_LENGTH);
+        particle_register[UUID_LENGTH] = '\0';
+        return 0;
+    }
+    else {
+        return scan_result;
+    }
+}
+
+int get_assay_cache_uuids() {
+  int index;
+  for (int i = 0; i < ASSAY_CACHE_SIZE; i++) {
+    index = i * (UUID_LENGTH + 1);
+    memcpy(&particle_register[index], eeprom.assay_cache[i].uuid, UUID_LENGTH);
+    if (i == ASSAY_CACHE_SIZE - 1) {
+      particle_register[index + UUID_LENGTH] = '\0';
+    }
+    else {
+      particle_register[index + UUID_LENGTH] = '\n';
+    }
+  }
+  return 0;
+}
+
+int get_test_cache_uuids() {
+  int index;
+  for (int i = 0; i < TEST_CACHE_SIZE; i++) {
+    index = i * (UUID_LENGTH + 1);
+    memcpy(&particle_register[index], eeprom.test_cache[i].test_uuid, UUID_LENGTH);
+    if (i == TEST_CACHE_SIZE - 1) {
+      particle_register[index + UUID_LENGTH] = '\0';
+    }
+    else {
+      particle_register[index + UUID_LENGTH] = '\n';
+    }
+  }
+  return 0;
+}
+
 int parse_particle_request(String msg) {
     int len = msg.length();
     int param_length = len - PARTICLE_REQUEST_CODE_LENGTH;
@@ -629,10 +659,14 @@ int request_data(String msg) {
                 return get_assay_record_by_uuid();
             case 4: // get params
                 return get_all_param_values();
-            case 5: // one parameter
+            case 5: // get one parameter
                 return get_param_value();
-            case 6: // one parameter
+            case 6: // get QR code
                 return get_QR_code_value();
+            case 7: // get assay cache uuids
+                return get_assay_cache_uuids();
+            case 8: // get test cache uuids
+                return get_test_cache_uuids();
         }
     }
 
@@ -654,7 +688,7 @@ int command_run_brevitest() {
       return -71;
     }
 
-    assay_index = get_assay_index_by_uuid(test_record->assay_uuid);
+    assay_index = find_assay_index_by_uuid(test_record->assay_uuid);
     if (assay_index < 0) {
       return -73;
     }
@@ -681,7 +715,7 @@ int command_claim_device() {
       return -200;
     }
 
-    assay_index = get_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
+    assay_index = find_assay_index_by_uuid(&particle_command.param[UUID_LENGTH]);
     if (assay_index == -1) {
         result = get_QR_code_value();
         if (result < 0) {
@@ -700,33 +734,13 @@ int command_release_device() {
 }
 
 int command_check_assay_cache() {
-    int result = get_assay_index_by_uuid(particle_command.param);
+    int result = find_assay_index_by_uuid(particle_command.param);
     return result == -1 ? 999 : result;
 }
 
 int command_check_test_cache() {
-    int result = get_test_index_by_uuid(particle_command.param);
+    int result = find_test_index_by_uuid(particle_command.param);
     return result == -1 ? 999 : result;
-}
-
-int command_list_assay_cache_uuids() {
-  int index;
-  for (int i = 0; i < ASSAY_CACHE_SIZE; i++) {
-    index = i * (UUID_LENGTH + 1);
-    memcpy(&particle_register[index], eeprom.assay_cache[i].uuid, UUID_LENGTH);
-    particle_register[index + UUID_LENGTH] = '\n';
-  }
-  return 0;
-}
-
-int command_list_test_cache_uuids() {
-  int index;
-  for (int i = 0; i < TEST_CACHE_SIZE; i++) {
-    index = i * (UUID_LENGTH + 1);
-    memcpy(&particle_register[index], eeprom.test_cache[i].test_uuid, UUID_LENGTH);
-    particle_register[index + UUID_LENGTH] = '\n';
-  }
-  return 0;
 }
 
 int command_start_transfer() {
@@ -1000,10 +1014,6 @@ int run_command(String msg) {
             return command_check_assay_cache();
         case 21: // check test cache
             return command_check_test_cache();
-        case 22: // dump assay cache uuids to register
-            return command_list_assay_cache_uuids();
-        case 23: // dump test cache uuids to register
-            return command_list_test_cache_uuids();
 
     // configuration functions
         case 30: // set device serial number
