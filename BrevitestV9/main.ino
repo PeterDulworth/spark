@@ -159,8 +159,8 @@ int scan_QR_code() {
 
     // test code
 
-    char temp[] = "555cc19af0fbbdd210de6e48";
-    /*char temp[] = "557c907edf2705463b0d7819";*/
+    /*char temp[] = "555cc19af0fbbdd210de6e48"; // laptop data*/
+    char temp[] = "557c907edf2705463b0d7819";   // home desktop data
     strncpy(qr_uuid, temp, UUID_LENGTH);
     return 0;
 
