@@ -102,12 +102,14 @@ void move_steps(long steps, int step_delay){
         if (cancel_process) {
             break;
         }
-        if ((dir == HIGH) && (digitalRead(pinLimitSwitch) == LOW)) {
-            break;
+
+        if (i % eeprom.param.publish_interval_during_move == 0) {
+            publish_progress();
+            Spark.process();
         }
 
-        if (i % eeprom.param.wifi_ping_rate == 0) {
-            Spark.process();
+        if ((dir == HIGH) && (digitalRead(pinLimitSwitch) == LOW)) {
+            break;
         }
 
         digitalWrite(pinStepperStep, HIGH);
@@ -130,7 +132,6 @@ void wake_stepper() {
 }
 
 void reset_stage() {
-    STATUS("Resetting device");
     move_steps(-(long) eeprom.param.reset_steps, eeprom.param.step_delay_us);
 }
 
@@ -448,7 +449,7 @@ int process_test_record(int index) {
         "%11d\t%11d\t%.24s\t%.24s\t%.24s\n%5d\t%5d\t%5d\t%5d\t%3d\t%3d\t%5d\t%5d\t%3d\t%3d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n%11d\t%5d\t%5d\t%5d\n", \
         test->start_time, test->finish_time, test->test_uuid, test->cartridge_uuid, test->assay_uuid, \
 //
-        test->param.reset_steps, test->param.step_delay_us, test->param.wifi_ping_rate, test->param.stepper_wake_delay_ms, \
+        test->param.reset_steps, test->param.step_delay_us, test->param.publish_interval_during_move, test->param.stepper_wake_delay_ms, \
         test->param.solenoid_surge_power, test->param.solenoid_sustain_power, test->param.solenoid_surge_period_ms, \
         test->param.delay_between_sensor_readings_ms, test->param.sensor_params & 0xFF, test->param.sensor_params >> 8, test->param.calibration_steps, \
 //
@@ -694,6 +695,7 @@ int command_run_brevitest() {
     }
 
     start_test = true;
+    test_last_progress_update = 0;
     update_progress("Starting test", 0);
 
     return 1;
@@ -709,9 +711,11 @@ int command_claim_device() {
     int result;
 
     if(claimant_uuid[0] == '\0') {
-      memcpy(claimant_uuid, &particle_command.param, UUID_LENGTH);
+      memcpy(claimant_uuid, particle_command.param, UUID_LENGTH);
+      claimant_uuid[UUID_LENGTH] = '\0';
     }
-    else if (memcmp(claimant_uuid, &particle_command.param, UUID_LENGTH)) {
+    else if (memcmp(claimant_uuid, particle_command.param, UUID_LENGTH)) {
+      Serial.println("Device already claimed by other user");
       return -200;
     }
 
@@ -719,18 +723,34 @@ int command_claim_device() {
     if (assay_index == -1) {
         result = get_QR_code_value();
         if (result < 0) {
+          Serial.println("Failed to read cartridge, device not claimed");
             return result;
         }
         assay_index = 9999;
     }
 
+    Serial.println("Device claimed");
+
     return assay_index;
 }
 
 int command_release_device() {
+  if (test_in_progress) {
+    Serial.println("Device busy, not released");
+    return 0;
+  }
+  else if (claimant_uuid[0] != '\0' && memcmp(claimant_uuid, particle_command.param, UUID_LENGTH)) {
+    Serial.println("User mismatch, device not released");
+    Serial.println(claimant_uuid);
+    Serial.println(particle_command.param);
+    return 0;
+  }
+  else {
     claimant_uuid[0] = '\0';
     assay_index = -1;
+    Serial.println("Device released");
     return 1;
+  }
 }
 
 int command_check_assay_cache() {
@@ -1101,10 +1121,17 @@ int get_BCODE_token(int index, int *token) {
     return i;
 }
 
+void publish_progress() {
+  unsigned long now = millis();
+
+  if (now - test_last_progress_update > PARTICLE_PUBLISH_INTERVAL) {
+      Spark.publish(test_record->test_uuid, particle_status, 60, PRIVATE);
+      test_last_progress_update = now;
+  }
+}
+
 void update_progress(char *message, int duration) {
-    unsigned long now = millis();
     int test_duration = eeprom.assay_cache[assay_index].duration * 1000;
-    char *test_uuid = test_record->test_uuid;
 
     if (!cancel_process) {
         if (duration == 0) {
@@ -1114,20 +1141,15 @@ void update_progress(char *message, int duration) {
         else if (duration < 0) {
             test_progress = test_duration;
             test_percent_complete = 100;
+            test_last_progress_update = 0;
         }
         else {
             test_progress += duration;
             test_percent_complete = 100 * test_progress / test_duration;
         }
 
-        STATUS("%s\n%.24s\n%d", message, test_uuid, test_percent_complete);
-        if (now - test_last_progress_update < PARTICLE_PUBLISH_INTERVAL) {
-            return;
-        }
-        else {
-            Spark.publish(test_uuid, particle_status, 60, PRIVATE);
-            test_last_progress_update = now;
-        }
+        STATUS("%s\n%.24s\n%d", message, test_record->test_uuid, test_percent_complete);
+        publish_progress();
     }
 }
 
@@ -1233,7 +1255,6 @@ int process_one_BCODE_command(int cmd, int index) {
         case 99: // Finish test
             test_record->finish_time = Time.now();
             write_test_record_to_eeprom();
-            reset_stage();
             break;
     }
 
@@ -1315,7 +1336,6 @@ void setup() {
   start_test = false;
   test_in_progress = false;
   cancel_process = false;
-  test_last_progress_update = millis();
 
   particle_register[0] = '\0';
   claimant_uuid[0] = '\0';
@@ -1333,8 +1353,10 @@ void setup() {
 /////////////////////////////////////////////////////////////
 
 void do_run_test() {
+  if (claimant_uuid[0] != '\0') {
     start_test = false;
     test_in_progress = true;
+    test_last_progress_update = millis();
 
     analogWrite(pinSolenoid, 0);
     analogWrite(pinSensorLED, 0);
@@ -1346,12 +1368,15 @@ void do_run_test() {
 
       update_progress("Test complete", -1);
 
+      reset_stage();
+
       test_index = -1;
+      assay_index = -1;
       test_record = 0;
       test_in_progress = false;
-
-      command_release_device();
+      claimant_uuid[0] = '\0';
     }
+  }
 }
 
 void update_blinking_device_LED() {
@@ -1377,6 +1402,10 @@ void loop(){
     }
 
     if (cancel_process) {
+        assay_index = -1;
+        test_record = 0;
+        test_in_progress = false;
+        claimant_uuid[0] = '\0';
         cancel_process = false;
     }
 

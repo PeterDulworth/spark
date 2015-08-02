@@ -21,7 +21,7 @@
 #define EEPROM_PARAM_COUNT 10
 #define EEPROM_OFFSET_PARAM_RESET_STEPS offsetof(Particle_EEPROM, param.reset_steps)
 #define EEPROM_OFFSET_PARAM_STEP_DELAY_US offsetof(Particle_EEPROM, param.step_delay_us)
-#define EEPROM_OFFSET_PARAM_WIFI_PING_RATE offsetof(Particle_EEPROM, param.wifi_ping_rate)
+#define EEPROM_OFFSET_PARAM_PUBLISH_INTERVAL_DURING_MOVE offsetof(Particle_EEPROM, param.publish_interval_during_move)
 #define EEPROM_OFFSET_PARAM_STEPPER_WAKE_DELAY_MS offsetof(Particle_EEPROM, param.stepper_wake_delay_ms)
 #define EEPROM_OFFSET_PARAM_SOLENOID_SURGE_POWER offsetof(Particle_EEPROM, param.solenoid_surge_power)
 #define EEPROM_OFFSET_PARAM_SOLENOID_SUSTAIN_POWER offsetof(Particle_EEPROM, param.solenoid_sustain_power)
@@ -175,10 +175,10 @@ int test_percent_complete;
 unsigned long test_last_progress_update;
 
 // uuids
-char user_uuid[UUID_LENGTH];
-char claimant_uuid[UUID_LENGTH];
-char test_uuid[UUID_LENGTH];
-char qr_uuid[UUID_LENGTH];
+char user_uuid[UUID_LENGTH + 1];
+char claimant_uuid[UUID_LENGTH + 1];
+char test_uuid[UUID_LENGTH + 1];
+char qr_uuid[UUID_LENGTH + 1];
 
 // particle messaging
 char particle_register[PARTICLE_REGISTER_SIZE + 1];
@@ -214,7 +214,7 @@ BrevitestSensorSampleRecord control_buffer[SENSOR_NUMBER_OF_SAMPLES];
 struct Param {
   uint16_t reset_steps;
   uint16_t step_delay_us;
-  uint16_t wifi_ping_rate;
+  uint16_t publish_interval_during_move;
   uint16_t stepper_wake_delay_ms;
   uint8_t solenoid_surge_power;
   uint8_t solenoid_sustain_power;
@@ -226,7 +226,7 @@ struct Param {
   Param() {
     reset_steps = 14000;
     step_delay_us = 1200;
-    wifi_ping_rate = 100;
+    publish_interval_during_move = 100;
     stepper_wake_delay_ms = 5;
     solenoid_surge_power = 255;
     solenoid_sustain_power = 200;
