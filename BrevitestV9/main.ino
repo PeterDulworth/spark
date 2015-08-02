@@ -104,7 +104,6 @@ void move_steps(long steps, int step_delay){
         }
 
         if (i % eeprom.param.publish_interval_during_move == 0) {
-            publish_progress();
             Spark.process();
         }
 
@@ -133,6 +132,7 @@ void wake_stepper() {
 
 void reset_stage() {
     move_steps(-(long) eeprom.param.reset_steps, eeprom.param.step_delay_us);
+    publish_progress();
 }
 
 void set_calibration_point() {
@@ -696,7 +696,7 @@ int command_run_brevitest() {
 
     start_test = true;
     test_last_progress_update = 0;
-    update_progress("Starting test", 0);
+    update_progress("Resetting device and starting test", 0);
 
     return 1;
 }
@@ -777,8 +777,6 @@ int command_start_transfer() {
 }
 
 int command_receive_packet() {
-    STATUS("Receiving data packet from cloud");
-
     // payload packet, contains packet number, packet length, packet id, and payload
 
     data_transfer.packet_number++;
@@ -1333,17 +1331,9 @@ void setup() {
     reset_params();
   }
 
-  start_test = false;
-  test_in_progress = false;
-  cancel_process = false;
+  reset_globals();
 
-  particle_register[0] = '\0';
-  claimant_uuid[0] = '\0';
-
-  test_index = -1;
-  assay_index = -1;
-
-  STATUS("Setup complete");
+  STATUS("Device startup complete");
 }
 
 /////////////////////////////////////////////////////////////
@@ -1351,6 +1341,28 @@ void setup() {
 //                           LOOP                          //
 //                                                         //
 /////////////////////////////////////////////////////////////
+
+void reset_globals() {
+  start_test = false;
+  test_in_progress = false;
+  cancel_process = false;
+
+  qr_uuid[0] = '\0';
+  claimant_uuid[0] = '\0';
+  test_uuid[0] = '\0';
+  qr_uuid[0] = '\0';
+
+  particle_register[0] = '\0';
+  particle_status[0] = '\0';
+
+  test_progress = 0;
+  test_percent_complete = 0;
+  test_in_progress = false;
+
+  test_index = -1;
+  assay_index = -1;
+  test_record = 0;
+}
 
 void do_run_test() {
   if (claimant_uuid[0] != '\0') {
@@ -1369,14 +1381,16 @@ void do_run_test() {
       update_progress("Test complete", -1);
 
       reset_stage();
-
-      test_index = -1;
-      assay_index = -1;
-      test_record = 0;
-      test_in_progress = false;
-      claimant_uuid[0] = '\0';
+      reset_globals();
     }
   }
+}
+
+void do_cancel_test() {
+  STATUS("%s\n%.24s\n%d", "Test cancelled", test_record->test_uuid, -1);
+  Spark.publish(test_record->test_uuid, particle_status, 60, PRIVATE);
+  reset_stage();
+  reset_globals();
 }
 
 void update_blinking_device_LED() {
@@ -1402,11 +1416,7 @@ void loop(){
     }
 
     if (cancel_process) {
-        assay_index = -1;
-        test_record = 0;
-        test_in_progress = false;
-        claimant_uuid[0] = '\0';
-        cancel_process = false;
+      do_cancel_test();
     }
 
     if (device_LED.blinking) {
