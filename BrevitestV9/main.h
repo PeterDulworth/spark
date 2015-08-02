@@ -144,6 +144,7 @@ int pinQRTrigger = D7;
 bool test_in_progress;
 bool start_test;
 bool cancel_process;
+bool calibrate;
 
 // device LED
 struct DeviceLED {

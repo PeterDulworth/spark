@@ -135,7 +135,7 @@ void reset_stage() {
     publish_progress();
 }
 
-void set_calibration_point() {
+void save_calibration_point() {
   uint8_t lsb, msb;
 
   msb = (uint8_t) (eeprom.param.calibration_steps >> 8);
@@ -161,7 +161,8 @@ int scan_QR_code() {
     // test code
 
     /*char temp[] = "555cc19af0fbbdd210de6e48"; // laptop data*/
-    char temp[] = "557c907edf2705463b0d7819";   // home desktop data
+    /*char temp[] = "557c907edf2705463b0d7819";   // home desktop data*/
+    char temp[] = "55be83d61bbc552671bb0de3";   // cloud
     strncpy(qr_uuid, temp, UUID_LENGTH);
     return 0;
 
@@ -922,10 +923,7 @@ int command_get_firmware_version() {
 
 int command_set_and_move_to_calibration_point() {
     eeprom.param.calibration_steps = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
-
-    set_calibration_point();
-    move_to_calibration_point();
-
+    calibrate = true;
     return 1;
 }
 
@@ -1393,6 +1391,12 @@ void do_cancel_test() {
   reset_globals();
 }
 
+void do_calibration() {
+  calibrate = false;
+  save_calibration_point();
+  move_to_calibration_point();
+}
+
 void update_blinking_device_LED() {
   unsigned long now = Time.now();
 
@@ -1417,6 +1421,10 @@ void loop(){
 
     if (cancel_process) {
       do_cancel_test();
+    }
+
+    if (calibrate) {
+      do_calibration();
     }
 
     if (device_LED.blinking) {
