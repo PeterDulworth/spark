@@ -75,6 +75,15 @@ void move_solenoid(int duration) {
         return;
     }
 
+    Serial.print("pinSolenoid: ");
+    Serial.println(pinSolenoid);
+    Serial.print("eeprom.param.solenoid_surge_power: ");
+    Serial.println(eeprom.param.solenoid_surge_power);
+    Serial.print("eeprom.param.solenoid_surge_period_ms: ");
+    Serial.println(eeprom.param.solenoid_surge_period_ms);
+    Serial.print("eeprom.param.solenoid_sustain_power: ");
+    Serial.println(eeprom.param.solenoid_sustain_power);
+
     analogWrite(pinSolenoid, eeprom.param.solenoid_surge_power);
     delay(eeprom.param.solenoid_surge_period_ms);
     analogWrite(pinSolenoid, eeprom.param.solenoid_sustain_power);
@@ -160,9 +169,14 @@ int scan_QR_code() {
 
     // test code
 
-    /*char temp[] = "555cc19af0fbbdd210de6e48"; // laptop data*/
-    /*char temp[] = "557c907edf2705463b0d7819";   // home desktop data*/
-    char temp[] = "55be83d61bbc552671bb0de3";   // cloud
+    // use following #defines for testing purposes
+    //
+    // CARTRIDGE_TEST_ID_LAPTOP
+    // CARTRIDGE_TEST_ID_DESKTOP
+    // CARTRIDGE_TEST_ID_CLOUD
+    //
+
+    char temp[] = CARTRIDGE_TEST_ID_DESKTOP;   // cloud
     strncpy(qr_uuid, temp, UUID_LENGTH);
     return 0;
 
@@ -224,9 +238,34 @@ int turn_off_device_LED() {
   return 1;
 }
 
-void start_blinking_device_LED(int total_duration) {
-  device_LED.blink_timeout = Time.now() + total_duration;
+void start_blinking_device_LED(int total_duration, int rate) {
+  device_LED.blink_rate = rate;
+  device_LED.blink_timeout = total_duration ? millis() + (unsigned long) total_duration : 0;
+  device_LED.blink_change_time = 0;
   device_LED.blinking = true;
+}
+
+void stop_blinking_device_LED() {
+  turn_off_device_LED();
+  device_LED.blinking = false;
+}
+
+void update_blinking_device_LED() {
+  unsigned long now = millis();
+
+  if (now > device_LED.blink_change_time) { // change LED state and reset blink timer
+    if (device_LED.currently_on) {
+      turn_off_device_LED();
+    }
+    else {
+      turn_on_device_LED();
+    }
+    device_LED.blink_change_time = now + device_LED.blink_rate;
+  }
+  if (device_LED.blink_timeout && now > device_LED.blink_timeout) {
+    device_LED.blinking = false;
+    turn_off_device_LED();
+  }
 }
 
 /////////////////////////////////////////////////////////////
@@ -732,6 +771,8 @@ int command_claim_device() {
 
     Serial.println("Device claimed");
 
+    start_blinking_device_LED(DEVICE_LED_BLINK_NO_TIMEOUT, DEVICE_LED_BLINK_DELAY_DEFAULTCLAIMED_DELAY);
+
     return assay_index;
 }
 
@@ -750,6 +791,7 @@ int command_release_device() {
     claimant_uuid[0] = '\0';
     assay_index = -1;
     Serial.println("Device released");
+    stop_blinking_device_LED();
     return 1;
   }
 }
@@ -940,8 +982,23 @@ int command_energize_solenoid() {
 }
 
 int command_blink_device_LED() {
-  int duration = extract_int_from_string(particle_command.param, 0, PARTICLE_COMMAND_PARAM_LENGTH);
-  start_blinking_device_LED(duration);
+  int duration, rate, pos, len = strlen(particle_command.param);
+  for (pos = 0; pos < len; pos++) {
+    if (particle_command.param[pos] == ',') {
+      break;
+    }
+  }
+
+  if (pos == len) {
+    duration = extract_int_from_string(particle_command.param, 0, len);
+    rate = DEVICE_LED_BLINK_DELAY_DEFAULT;
+  }
+  else {
+    duration = extract_int_from_string(particle_command.param, 0, pos);
+    rate = extract_int_from_string(particle_command.param, pos + 1, len);
+  }
+
+  start_blinking_device_LED(duration, rate);
   return 1;
 }
 
@@ -1199,7 +1256,9 @@ int process_one_BCODE_command(int cmd, int index) {
             break;
         case 6: // Device LED blink(milliseconds)
             index = get_BCODE_token(index, &param1);
+            index = get_BCODE_token(index, &param2);
             update_progress("Blinking device LED", param1);
+            device_LED.blink_rate = (unsigned long) abs(param2);
             analogWrite(pinDeviceLED, 255);
             delay(param1);
             analogWrite(pinDeviceLED, 0);
@@ -1313,6 +1372,8 @@ void setup() {
   digitalWrite(pinQRTrigger, HIGH);
   digitalWrite(pinQRPower, HIGH);
 
+  turn_off_device_LED();
+
   Serial.begin(9600);     // standard serial port
   Serial1.begin(115200);  // QR scanner interface through RX/TX pins
 
@@ -1395,23 +1456,6 @@ void do_calibration() {
   calibrate = false;
   save_calibration_point();
   move_to_calibration_point();
-}
-
-void update_blinking_device_LED() {
-  unsigned long now = Time.now();
-
-  if (now > device_LED.blink_change_time) { // change LED state and reset blink timer
-    if (device_LED.currently_on) {
-      turn_off_device_LED();
-    }
-    else {
-      turn_on_device_LED();
-    }
-    device_LED.blink_change_time = now + DEVICE_LED_BLINK_DELAY;
-  }
-  if (now > device_LED.blink_timeout) {
-    device_LED.blinking = false;
-  }
 }
 
 void loop(){

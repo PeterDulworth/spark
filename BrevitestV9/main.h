@@ -10,6 +10,12 @@
 #define ERROR_MESSAGE(err) Serial.println(err)
 #define CANCELLABLE(x) if (!cancel_process) {x}
 
+// cartridge ids for testing
+
+#define CARTRIDGE_TEST_ID_LAPTOP "555cc19af0fbbdd210de6e48"
+#define CARTRIDGE_TEST_ID_DESKTOP "557c907edf2705463b0d7819"
+#define CARTRIDGE_TEST_ID_CLOUD "55be83d61bbc552671bb0de3"
+
 // eeprom
 #define EEPROM_ADDR_FIRMWARE_VERSION offsetof(Particle_EEPROM, firmware_version)
 #define EEPROM_ADDR_DATA_FORMAT_VERSION offsetof(Particle_EEPROM, data_format_version)
@@ -114,7 +120,9 @@
 #define TEST_DURATION_LENGTH 6
 
 // device LED
-#define DEVICE_LED_BLINK_DELAY 500
+#define DEVICE_LED_BLINK_DELAY_DEFAULT 500
+#define DEVICE_LED_BLINK_DELAY_DEFAULTCLAIMED_DELAY 100
+#define DEVICE_LED_BLINK_NO_TIMEOUT 0
 
 // qr scanner
 #define QR_DELAY_AFTER_POWER_ON_MS 1000
@@ -128,17 +136,17 @@
 int pinLimitSwitch = A0;
 int pinSolenoid = A1;
 int pinQRPower = A2;
-    //  A3 unassigned
+int pinQRTrigger = A3;
 int pinSensorLED = A4;
 int pinDeviceLED = A5;
 int pinStepperSleep = D0;
 int pinStepperDir = D1;
 int pinStepperStep = D2;
-int pinAssaySDA = D3;
-int pinAssaySCL = D4;
-int pinControlSDA = D5;
-int pinControlSCL = D6;
-int pinQRTrigger = D7;
+int pinAssaySCL = D3;
+int pinAssaySDA = D4;
+int pinControlSCL = D5;
+int pinControlSDA = D6;
+//  D7 unassigned;
 
 // global variables
 bool test_in_progress;
@@ -150,8 +158,16 @@ bool calibrate;
 struct DeviceLED {
     bool blinking;
     bool currently_on;
+    unsigned long blink_rate;
     unsigned long blink_change_time;
     unsigned long blink_timeout;
+    DeviceLED() {
+      blinking = false;
+      currently_on = false;
+      blink_rate = DEVICE_LED_BLINK_DELAY_DEFAULT;
+      blink_change_time = 0;
+      blink_timeout = 0;
+    }
 } device_LED;
 
 // buffer
