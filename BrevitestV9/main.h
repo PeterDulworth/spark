@@ -134,11 +134,11 @@
 
 // pin definitions
 int pinLimitSwitch = A0;
-int pinSolenoid = A1;
+int pinDeviceLED = A1;
 int pinQRPower = A2;
 int pinQRTrigger = A3;
 int pinSensorLED = A4;
-int pinDeviceLED = A5;
+int pinSolenoid = A5;
 int pinStepperSleep = D0;
 int pinStepperDir = D1;
 int pinStepperStep = D2;
