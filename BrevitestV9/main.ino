@@ -176,7 +176,7 @@ int scan_QR_code() {
     // CARTRIDGE_TEST_ID_CLOUD
     //
 
-    char temp[] = CARTRIDGE_TEST_ID_DESKTOP;   // cloud
+    char temp[] = CARTRIDGE_TEST_ID_CLOUD;   // cloud
     strncpy(qr_uuid, temp, UUID_LENGTH);
     return 0;
 
