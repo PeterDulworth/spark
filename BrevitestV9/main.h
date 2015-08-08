@@ -130,7 +130,7 @@
 #define QR_COMMAND_PREFIX "\x02M\x0D"
 #define QR_COMMAND_ACTIVATE "\x02T\x0D"
 #define QR_COMMAND_DEACTIVATE "\x02U\x0D"
-#define QR_READ_TIMEOUT 5000
+#define QR_READ_TIMEOUT 20000
 
 // pin definitions
 int pinLimitSwitch = A0;

@@ -176,13 +176,13 @@ int scan_QR_code() {
     // CARTRIDGE_TEST_ID_CLOUD
     //
 
-    char temp[] = CARTRIDGE_TEST_ID_CLOUD;   // cloud
+    /*char temp[] = CARTRIDGE_TEST_ID_CLOUD;   // cloud
     strncpy(qr_uuid, temp, UUID_LENGTH);
-    return 0;
+    return 0;*/
 
     // actual code
 
-    /*unsigned long timeout;
+    unsigned long timeout = 0;
     int buf, i;
 
     digitalWrite(pinQRPower, HIGH);
@@ -190,9 +190,9 @@ int scan_QR_code() {
     digitalWrite(pinQRTrigger, LOW);
     delay(QR_DELAY_AFTER_TRIGGER_MS);
     digitalWrite(pinQRTrigger, HIGH);
-    timeout = Time.now() + QR_READ_TIMEOUT;
+    timeout = millis() + QR_READ_TIMEOUT;
     while (!Serial1.available()) {
-        if (Time.now() > timeout) {
+        if (millis() > timeout) {
             return -500;
         }
         Spark.process();
@@ -206,7 +206,11 @@ int scan_QR_code() {
         qr_uuid[i++] = (char) buf;
     } while (i < UUID_LENGTH && Serial1.available());
 
-    return 0;*/
+    qr_uuid[UUID_LENGTH] = '\0';
+    Serial.print("qr_uuid: ");
+    Serial.println(qr_uuid);
+
+    return 0;
 }
 
 int validate_QR_code(char *uuid_to_validate) {
@@ -1370,7 +1374,7 @@ void setup() {
   digitalWrite(pinSolenoid, LOW);
   digitalWrite(pinStepperSleep, LOW);
   digitalWrite(pinQRTrigger, HIGH);
-  digitalWrite(pinQRPower, HIGH);
+  digitalWrite(pinQRPower, LOW);
 
   turn_off_device_LED();
 
